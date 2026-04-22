@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Malla Curricular — Ingeniería Ambiental</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300&display=swap" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <div class="logo">
+        <span class="logo-hex">⬡</span>
+        <div class="logo-text">
+          <div class="logo-title">MALLA</div>
+          <div class="logo-sub">CURRICULAR</div>
+        </div>
+      </div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <button class="nav-item active" data-tab="estudiante">
+        <span class="nav-icon">◈</span><span>Estudiante</span>
+      </button>
+      <button class="nav-item" data-tab="malla">
+        <span class="nav-icon">▦</span><span>Malla Semestral</span>
+      </button>
+      <button class="nav-item" data-tab="grafo">
+        <span class="nav-icon">◉</span><span>Grafo</span>
+      </button>
+      <button class="nav-item" data-tab="electivas">
+        <span class="nav-icon">◇</span><span>Electivas</span>
+      </button>
+    </nav>
+
+    <div class="sidebar-student" id="sidebar-student" hidden>
+      <div class="student-avatar" id="sidebar-avatar">--</div>
+      <div class="student-name-wrap">
+        <div class="student-name" id="sidebar-name">—</div>
+        <div class="student-doc" id="sidebar-doc">—</div>
+      </div>
+      <div class="progress-wrap">
+        <svg class="progress-ring" viewBox="0 0 80 80">
+          <circle cx="40" cy="40" r="32" class="ring-bg"/>
+          <circle cx="40" cy="40" r="32" class="ring-fill" id="progress-ring-fill"/>
+        </svg>
+        <div class="progress-pct" id="progress-pct">0%</div>
+      </div>
+      <div class="sidebar-stats">
+        <div class="stat-chip approved-chip">
+          <span class="stat-num" id="sb-approved">0</span>
+          <span class="stat-lbl">Aprobadas</span>
+        </div>
+        <div class="stat-chip available-chip">
+          <span class="stat-num" id="sb-available">0</span>
+          <span class="stat-lbl">Disponibles</span>
+        </div>
+        <div class="stat-chip blocked-chip">
+          <span class="stat-num" id="sb-blocked">0</span>
+          <span class="stat-lbl">Bloqueadas</span>
+        </div>
+      </div>
+      <button class="btn-export" id="export-pdf-btn">
+        <span>⬇</span> Exportar PDF
+      </button>
+    </div>
+  </aside>
+
+  <main class="main-content">
+    <header class="topbar">
+      <div class="topbar-left">
+        <h1 class="page-title" id="page-title">Gestión de Estudiante</h1>
+      </div>
+      <div class="topbar-right">
+        <div class="search-wrap">
+          <span class="search-icon">⌕</span>
+          <input type="text" id="course-search" class="search-input" placeholder="Buscar materia por código o nombre..." autocomplete="off"/>
+          <div class="search-dropdown" id="search-dropdown" hidden></div>
+        </div>
+      </div>
+    </header>
+
+    <div class="toast-zone" id="toast-zone"></div>
+
+    <!-- TAB: ESTUDIANTE -->
+    <section class="tab-pane active" id="tab-estudiante">
+      <div class="cards-grid-2">
+        <div class="card">
+          <div class="card-title">Nuevo Estudiante</div>
+          <div class="field-group">
+            <label>Nombre completo</label>
+            <input type="text" id="full_name" placeholder="Ej. María Torres Pérez" />
+          </div>
+          <div class="field-group">
+            <label>Número de documento</label>
+            <input type="text" id="document_number" placeholder="Ej. 1234567890" />
+          </div>
+          <button class="btn-primary" id="create-student-btn">Crear estudiante</button>
+        </div>
+        <div class="card">
+          <div class="card-title">Cargar Estudiante</div>
+          <div class="field-group">
+            <label>Seleccionar estudiante</label>
+            <select id="student-select">
+              <option value="">— Selecciona un estudiante —</option>
+            </select>
+          </div>
+          <button class="btn-secondary" id="load-student-btn">Cargar malla</button>
+        </div>
+      </div>
+
+      <div class="card" id="approve-panel" hidden>
+        <div class="card-title">Registrar Materia Aprobada</div>
+        <div class="approve-row">
+          <select id="available-course-select">
+            <option value="">— Selecciona materia disponible —</option>
+          </select>
+          <button class="btn-primary" id="approve-course-btn">✓ Marcar aprobada</button>
+        </div>
+        <p class="hint-text">Solo materias con todos los prerrequisitos cumplidos aparecen aquí.</p>
+      </div>
+    </section>
+
+    <!-- TAB: MALLA -->
+    <section class="tab-pane" id="tab-malla">
+      <div class="filter-bar">
+        <div class="filter-pills" id="area-filters">
+          <button class="pill active" data-filter="all">Todas las áreas</button>
+        </div>
+        <div class="legend-row">
+          <span class="leg-item approved-leg">Aprobada</span>
+          <span class="leg-item available-leg">Disponible</span>
+          <span class="leg-item blocked-leg">Bloqueada</span>
+        </div>
+      </div>
+      <div id="curriculum-grid"></div>
+    </section>
+
+    <!-- TAB: GRAFO -->
+    <section class="tab-pane" id="tab-grafo">
+      <div class="grafo-toolbar">
+        <div class="grafo-legend">
+          <span class="leg-item approved-leg">Aprobada</span>
+          <span class="leg-item available-leg">Disponible</span>
+          <span class="leg-item blocked-leg">Bloqueada</span>
+        </div>
+        <div class="grafo-btns">
+          <button class="btn-ghost" id="grafo-fit">⊡ Ajustar</button>
+          <button class="btn-ghost" id="grafo-layout">↻ Reorganizar</button>
+        </div>
+      </div>
+      <div id="cy-container">
+        <div class="grafo-empty" id="grafo-empty">Carga un estudiante para ver el grafo de prerrequisitos</div>
+      </div>
+      <div class="cy-tooltip" id="cy-tooltip" hidden></div>
+    </section>
+
+    <!-- TAB: ELECTIVAS -->
+    <section class="tab-pane" id="tab-electivas">
+      <div class="electivas-intro">
+        <h2>Líneas de Profundización</h2>
+        <p>Selecciona tu línea de énfasis y gestiona las electivas correspondientes. Cada línea ofrece un conjunto de materias especializadas.</p>
+      </div>
+      <div class="lineas-grid" id="lineas-grid"></div>
+      <div class="card" id="electivas-mine" hidden>
+        <div class="card-title">Mis Electivas Registradas</div>
+        <div id="electivas-status"></div>
+      </div>
+    </section>
+
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
