@@ -65,6 +65,10 @@
           <span class="stat-num" id="sb-blocked">0</span>
           <span class="stat-lbl">Bloqueadas</span>
         </div>
+        <div class="stat-chip" style="background: rgba(59,130,246,0.15); color: #3b82f6;">
+  <span class="stat-num" id="sb-promedio">0.0</span>
+  <span class="stat-lbl">Promedio Ponderado</span>
+</div>
       </div>
       <button class="btn-export" id="export-pdf-btn">
         <span>⬇</span> Exportar PDF
@@ -116,15 +120,16 @@
       </div>
 
       <div class="card" id="approve-panel" hidden>
-        <div class="card-title">Registrar Materia Aprobada</div>
-        <div class="approve-row">
-          <select id="available-course-select">
-            <option value="">— Selecciona materia disponible —</option>
-          </select>
-          <button class="btn-primary" id="approve-course-btn">✓ Marcar aprobada</button>
-        </div>
-        <p class="hint-text">Solo materias con todos los prerrequisitos cumplidos aparecen aquí.</p>
-      </div>
+  <div class="card-title">Registrar Calificación</div>
+  <div class="approve-row">
+    <select id="available-course-select">
+      <option value="">— Selecciona materia disponible —</option>
+    </select>
+    <input type="number" id="course-grade" step="0.1" min="1.0" max="5.0" placeholder="Nota" style="width: 80px; padding: 8px; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg2); color: var(--text1);" />
+    <button class="btn-primary" id="approve-course-btn">✓ Guardar Nota</button>
+  </div>
+  <p class="hint-text">Si la nota es menor a 3.0, la materia quedará como Perdida.</p>
+</div>
     </section>
 
     <!-- TAB: MALLA -->

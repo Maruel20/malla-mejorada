@@ -243,24 +243,40 @@ function renderApprovePanel(data) {
     opt.textContent = `${c.code} — ${c.name}`;
     sel.appendChild(opt);
   });
+  let totalCreditsAttempted = 0;
+  let weightedSum = 0;
+
+  data.courses.forEach(c => {
+    if (c.grade !== undefined) {
+      totalCreditsAttempted += c.credits;
+      weightedSum += (c.grade * c.credits);
+    }
+  });
+
+  const promedio = totalCreditsAttempted > 0 ? (weightedSum / totalCreditsAttempted).toFixed(2) : '0.0';
+  document.getElementById('sb-promedio').textContent = promedio;
 }
 
 document.getElementById('approve-course-btn').addEventListener('click', async () => {
   const code = document.getElementById('available-course-select').value;
+  const grade = document.getElementById('course-grade').value;
+  
   if (!currentStudentId) { toast('Carga un estudiante primero.', 'error'); return; }
   if (!code) { toast('Selecciona una materia.', 'error'); return; }
+  if (!grade || grade < 1 || grade > 5) { toast('Ingresa una nota válida (1.0 - 5.0).', 'error'); return; }
 
   try {
     const data = await apiFetch(`/students/${currentStudentId}/approved-courses`, {
       method: 'POST',
-      body: JSON.stringify({ course_code: code })
+      body: JSON.stringify({ course_code: code, grade: parseFloat(grade) })
     });
     currentCurriculum = { ...data, student: currentCurriculum.student };
     toast(data.message, 'success');
+    document.getElementById('course-grade').value = ''; // Limpiar campo
     renderAll(currentCurriculum);
   } catch (err) {
     const missing = err.missingPrerequisites?.length
-      ? ' Faltan: ' + err.missingPrerequisites.map(i => i.code).join(', ')
+      ? ' Faltan/Perdidas: ' + err.missingPrerequisites.map(i => i.code).join(', ')
       : '';
     toast((err.message || 'Error.') + missing, 'error');
   }
@@ -292,7 +308,11 @@ function buildAreaFilters(data) {
 }
 
 function renderCurriculumGrid(data) {
+  // Asegurarnos de que grid está definido obteniendo el contenedor del DOM
   const grid = document.getElementById('curriculum-grid');
+  
+  if (!grid) return; // Validación de seguridad
+
   const filtered = activeAreaFilter === 'all'
     ? data.courses
     : data.courses.filter(c => c.area === activeAreaFilter);
@@ -302,6 +322,27 @@ function renderCurriculumGrid(data) {
     if (!semesters.has(c.semester)) semesters.set(c.semester, []);
     semesters.get(c.semester).push(c);
   });
+
+  grid.innerHTML = ''; // Limpiamos el contenedor
+  [...semesters.entries()].sort((a,b) => a[0]-b[0]).forEach(([sem, courses]) => {
+    const col = document.createElement('div');
+    col.className = 'semester-col';
+
+    // Calcular créditos de este semestre
+    const totalCredits = courses.reduce((sum, c) => sum + c.credits, 0);
+
+    const header = document.createElement('h3');
+    header.innerHTML = `Semestre ${sem} <span style="font-size:0.8em; color:var(--text3); font-weight:normal">(${totalCredits} cr.)</span>`;
+    col.appendChild(header);
+
+    courses.forEach(course => {
+      col.appendChild(buildCourseCard(course));
+    });
+
+    grid.appendChild(col);
+  });
+}
+
 
   grid.innerHTML = '';
   [...semesters.entries()].sort((a,b) => a[0]-b[0]).forEach(([sem, courses]) => {
@@ -318,30 +359,28 @@ function renderCurriculumGrid(data) {
 
     grid.appendChild(col);
   });
-}
+
 
 function buildCourseCard(course) {
   const div = document.createElement('div');
-  div.className = `course-card ${course.status}`;
+  div.className = `course-card ${course.status}`; // 'failed' activará el estilo si es menor a 3.0
   div.dataset.code = course.code;
 
-  const reqs = course.prerequisites.length
-    ? course.prerequisites.join(', ')
-    : 'Sin prerrequisitos';
-
-  const missing = course.missingPrerequisites.length
-    ? `<div class="c-missing">⚠ Faltan: ${course.missingPrerequisites.join(', ')}</div>`
+  const reqs = course.prerequisites.length ? course.prerequisites.join(', ') : 'Sin prerrequisitos';
+  const missing = course.missingPrerequisites.length ? `<div class="c-missing">⚠ Faltan: ${course.missingPrerequisites.join(', ')}</div>` : '';
+  const removeBtn = (course.status === 'approved' || course.status === 'failed')
+    ? `<button class="btn-danger remove-btn" data-code="${course.code}">✕ Quitar</button>`
     : '';
 
-  const removeBtn = course.status === 'approved'
-    ? `<button class="btn-danger remove-btn" data-code="${course.code}">✕ Quitar aprobación</button>`
-    : '';
+  // Mostrar nota si existe
+  const gradeLabel = course.grade !== undefined ? `<span class="c-credits" style="color: ${course.grade >= 3.0 ? '#10b981' : '#ef4444'}">★ Nota: ${course.grade}</span>` : '';
 
   div.innerHTML = `
     <div class="c-code">${course.code}</div>
     <div class="c-name">${course.name}</div>
-    <div class="c-meta">
+    <div class="c-meta" style="display:flex; justify-content:space-between; width:100%">
       <span class="c-credits">◆ ${course.credits} cr.</span>
+      ${gradeLabel}
     </div>
     <div class="c-reqs">Prerreq: ${reqs}</div>
     ${missing}
@@ -349,6 +388,7 @@ function buildCourseCard(course) {
     ${removeBtn}
   `;
 
+  // ... el resto de la función sigue igual (eventListener para removeBtn)
   const btn = div.querySelector('.remove-btn');
   if (btn) {
     btn.addEventListener('click', async () => {
@@ -459,9 +499,11 @@ function buildGraph() {
   const emptyMsg = document.getElementById('grafo-empty');
   if (emptyMsg) emptyMsg.remove();
 
+  // Agregamos el color rojo para las materias perdidas ('failed')
   const statusColor = {
     approved: '#10b981',
     available: '#f59e0b',
+    failed: '#ef4444', 
     blocked: '#4b5563'
   };
 
@@ -494,18 +536,18 @@ function buildGraph() {
       {
         selector: 'node',
         style: {
-          'background-color': 'ele(color)',
+          'background-color': 'data(color)', // Corregido: data(color) en vez de ele(color)
           'label': 'data(label)',
           'color': '#e2e8f0',
           'font-family': 'Space Mono, monospace',
           'font-size': '9px',
-          'font-weight': '700',
+          'font-weight': 'bold', // Corregido: 'bold' en vez de 700
           'text-valign': 'center',
           'text-halign': 'center',
           'width': 46,
           'height': 46,
           'border-width': 2,
-          'border-color': 'ele(color)',
+          'border-color': 'data(color)', // Corregido
           'border-opacity': 0.6,
           'text-outline-color': '#080c14',
           'text-outline-width': 2,
@@ -528,6 +570,14 @@ function buildGraph() {
         }
       },
       {
+        selector: 'node[status="failed"]',
+        style: {
+          'background-color': '#ef4444',
+          'border-color': '#f87171',
+          'border-width': 2,
+        }
+      },
+      {
         selector: 'node[status="blocked"]',
         style: {
           'background-color': '#334155',
@@ -541,7 +591,10 @@ function buildGraph() {
         style: {
           'border-width': 3,
           'border-color': '#3b82f6',
-          'box-shadow': '0 0 0 4px rgba(59,130,246,0.4)',
+          // Corregido: Cytoscape usa underlay para efectos de brillo/sombra exterior
+          'underlay-color': '#3b82f6',
+          'underlay-padding': 4,
+          'underlay-opacity': 0.4,
         }
       },
       {
@@ -581,7 +634,7 @@ function buildGraph() {
       padding: 30,
       avoidOverlap: true,
     },
-    wheelSensitivity: 0.3,
+    // Corregido: Se eliminó wheelSensitivity para evitar el warning
     userZoomingEnabled: true,
     userPanningEnabled: true,
   });
@@ -601,7 +654,6 @@ function buildGraph() {
       <div class="tt-row">Estado: <span class="status-badge ${data.status}">${statusLabel(data.status)}</span></div>
     `;
 
-    // Highlight neighbors
     cyInstance.elements().addClass('faded');
     node.removeClass('faded');
     node.connectedEdges().removeClass('faded').addClass('highlighted');

@@ -61,13 +61,18 @@ export async function getStudentCurriculum(req, res) {
 export async function approveCourse(req, res) {
   try {
     const studentId = Number(req.params.id);
-    const { course_code } = req.body;
+    const { course_code, grade } = req.body;
 
     if (!course_code) {
       return fail(res, 'course_code es obligatorio.');
     }
+    
+    const numericGrade = parseFloat(grade);
+    if (isNaN(numericGrade) || numericGrade < 1.0 || numericGrade > 5.0) {
+      return fail(res, 'La nota debe ser un número entre 1.0 y 5.0', 400);
+    }
 
-    const result = await approveCourseForStudent(studentId, course_code);
+    const result = await approveCourseForStudent(studentId, course_code, numericGrade);
     if (!result.valid) {
       return fail(res, result.message, result.status, {
         missingPrerequisites: result.missingPrerequisites || []
@@ -77,7 +82,7 @@ export async function approveCourse(req, res) {
     const updated = await getCurriculumForStudent(studentId);
     return ok(res, { message: result.message, ...updated });
   } catch (error) {
-    return fail(res, 'Error al aprobar materia.', 500, { error: error.message });
+    return fail(res, 'Error al procesar la materia.', 500, { error: error.message });
   }
 }
 

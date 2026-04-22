@@ -1051,3 +1051,13 @@ select option {
   .approve-row { flex-direction: column; }
   .approve-row .btn-primary { width: 100%; }
 }
+.course-card.failed {
+  border-left-color: #ef4444; /* Rojo */
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.05), transparent);
+}
+.status-badge.failed {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+
+/* Y puedes añadir al statusLabel en app.js que { failed: 'Perdida' } */
