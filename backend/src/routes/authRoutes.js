@@ -1,11 +1,8 @@
 import { Router } from 'express';
-import { register, login, me } from '../controllers/authController.js';
-import { requireAuth } from '../middleware/auth.js';
+import { registrar, login, verificarToken, perfil } from '../controllers/authController.js';
 
-const router = Router();
-
-router.post('/register', register);
-router.post('/login',    login);
-router.get('/me',        requireAuth, me);
-
-export default router;
+const r = Router();
+r.post('/registrar', registrar);
+r.post('/login',     login);
+r.get('/perfil',     verificarToken, perfil);
+export default r;

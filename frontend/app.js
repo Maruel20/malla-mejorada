@@ -1,864 +1,686 @@
-/* ============================================================
-   MALLA CURRICULAR v2 — Con autenticación, semestres progresivos y CRUD de notas
-   ============================================================ */
+/* =====================================================
+   MALLA CURRICULAR v3 — app.js
+   ===================================================== */
 
-const API_URL = 'http://localhost:3000/api';
-const MIN_CREDITS = 12;
-const MAX_CREDITS = 20;
+const API = 'http://localhost:3000/api';
 
-// ── Estado global ─────────────────────────────────────────────
-let currentStudent   = null;
-let currentToken     = localStorage.getItem('mc_token');
-let currentCurriculum = null;
-let cyInstance       = null;
-let activeTab        = 'malla';
-let activeAreaFilter = 'all';
-let enrollModalSem   = null; // semestre del modal abierto
+// ── Estado ───────────────────────────────────────────
+let token      = localStorage.getItem('mc_token') || '';
+let estudiante = null;
+let malla      = null;
+let cy         = null;
+let tabActual  = 'malla';
+let areaFiltro = 'todas';
+let modalSem   = null;
 
-const LINEAS = [
-  { id: 'hidrica',   name: 'Recursos Hídricos',      icon: '💧', color: '#3b82f6', bg: 'rgba(59,130,246,0.15)',  codes: ['453034','453043','453039'], description: 'Hidráulica · Hidrología · Contaminación del Agua' },
-  { id: 'residuos',  name: 'Residuos y Suelos',       icon: '♻️', color: '#10b981', bg: 'rgba(16,185,129,0.15)', codes: ['453044','453048','453055'], description: 'Residuos Sólidos · Suelos · Evaluación de Impacto' },
-  { id: 'atmosfera', name: 'Calidad del Aire',         icon: '🌫️', color: '#8b5cf6', bg: 'rgba(139,92,246,0.15)', codes: ['453030','453049'],          description: 'Física Ambiental · Contaminación del Aire' },
-  { id: 'biotec',    name: 'Biotecnología',            icon: '🧬', color: '#f59e0b', bg: 'rgba(245,158,11,0.15)', codes: ['453109','453057','453026'], description: 'Biotecnología · Procesos Unitarios · Microbiología' },
-  { id: 'gestion',   name: 'Gestión y Ordenamiento',  icon: '🗺️', color: '#ec4899', bg: 'rgba(236,72,153,0.15)',  codes: ['453033','453037','453038','453047'], description: 'Geociencias · Geomática I y II' }
-];
-
-// ── Utilidades HTTP ───────────────────────────────────────────
-async function apiFetch(path, options = {}) {
-  const headers = { 'Content-Type': 'application/json' };
-  if (currentToken) headers['Authorization'] = `Bearer ${currentToken}`;
-  const response = await fetch(`${API_URL}${path}`, { headers, ...options });
-  const data = await response.json();
-  if (!response.ok || !data.ok) throw data;
-  return data;
-}
-
-function toast(text, type = 'success', duration = 4000) {
-  const zone = document.getElementById('toast-zone');
-  const el   = document.createElement('div');
-  el.className  = `toast ${type}`;
-  el.textContent = text;
-  zone.appendChild(el);
-  setTimeout(() => {
-    el.style.animation = 'slideOut 0.25s ease forwards';
-    setTimeout(() => el.remove(), 260);
-  }, duration);
-}
-
-function initials(first, last) {
-  return ((first?.[0] || '') + (last?.[0] || '')).toUpperCase();
-}
-
-function setProgress(pct) {
-  const circumference = 2 * Math.PI * 32;
-  const fill = document.getElementById('progress-ring-fill');
-  if (fill) fill.style.strokeDashoffset = circumference - (pct / 100) * circumference;
-  const pctEl = document.getElementById('progress-pct');
-  if (pctEl) pctEl.textContent = `${Math.round(pct)}%`;
-}
-
-function statusLabel(s) {
-  return { approved: 'Aprobada', enrolled: 'Matriculada', available: 'Disponible', blocked: 'Bloqueada', failed: 'Perdida', 'semester-locked': 'Sem. bloqueado' }[s] || s;
-}
-
-// ── Autenticación ─────────────────────────────────────────────
-const authScreen   = document.getElementById('auth-screen');
-const sidebar      = document.getElementById('sidebar');
-const mainContent  = document.getElementById('main-content');
-
-function showAuthScreen() {
-  authScreen.hidden    = false;
-  sidebar.hidden       = true;
-  mainContent.hidden   = true;
-}
-
-function showMainApp() {
-  authScreen.hidden  = true;
-  sidebar.hidden     = false;
-  mainContent.hidden = false;
-}
-
-async function checkSession() {
-  if (!currentToken) { showAuthScreen(); return; }
+// ── Utilidades ───────────────────────────────────────
+async function api(path, opts = {}) {
+  const h = { 'Content-Type': 'application/json' };
+  if (token) h['Authorization'] = 'Bearer ' + token;
   try {
-    const data    = await apiFetch('/auth/me');
-    currentStudent = data.student;
-    showMainApp();
-    await loadCurriculum();
-  } catch {
-    currentToken = null;
-    localStorage.removeItem('mc_token');
-    showAuthScreen();
+    const r = await fetch(API + path, { headers: h, ...opts });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.msg || 'Error del servidor');
+    return d;
+  } catch (e) {
+    if (e instanceof TypeError) throw new Error('No se pudo conectar al servidor (puerto 3000).');
+    throw e;
   }
 }
 
-// Auth tabs
-document.querySelectorAll('.auth-tab').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const target = btn.dataset.form;
-    document.querySelectorAll('.auth-tab').forEach(b => b.classList.toggle('active', b.dataset.form === target));
-    document.getElementById('form-login').hidden    = target !== 'login';
-    document.getElementById('form-register').hidden = target !== 'register';
-    document.getElementById('login-error').hidden    = true;
-    document.getElementById('register-error').hidden = true;
-  });
-});
-
-// Login
-document.getElementById('login-btn').addEventListener('click', async () => {
-  const cedula   = document.getElementById('login-cedula').value.trim();
-  const password = document.getElementById('login-password').value;
-  const errEl    = document.getElementById('login-error');
-  errEl.hidden   = true;
-
-  if (!cedula || !password) { showAuthError(errEl, 'Ingresa cédula y contraseña.'); return; }
-
-  try {
-    document.getElementById('login-btn').disabled = true;
-    const data     = await apiFetch('/auth/login', { method: 'POST', body: JSON.stringify({ document_number: cedula, password }) });
-    currentToken   = data.token;
-    currentStudent = data.student;
-    localStorage.setItem('mc_token', currentToken);
-    showMainApp();
-    await loadCurriculum();
-  } catch (err) {
-    showAuthError(errEl, err.message || 'Error al iniciar sesión.');
-  } finally {
-    document.getElementById('login-btn').disabled = false;
-  }
-});
-
-// Permitir enter en login
-['login-cedula','login-password'].forEach(id => {
-  document.getElementById(id).addEventListener('keydown', e => {
-    if (e.key === 'Enter') document.getElementById('login-btn').click();
-  });
-});
-
-// Register
-document.getElementById('register-btn').addEventListener('click', async () => {
-  const first_name      = document.getElementById('reg-first-name').value.trim();
-  const last_name       = document.getElementById('reg-last-name').value.trim();
-  const document_number = document.getElementById('reg-cedula').value.trim();
-  const password        = document.getElementById('reg-password').value;
-  const confirm         = document.getElementById('reg-confirm').value;
-  const errEl           = document.getElementById('register-error');
-  errEl.hidden          = true;
-
-  if (!first_name || !last_name || !document_number || !password) {
-    showAuthError(errEl, 'Completa todos los campos.'); return;
-  }
-  if (password !== confirm) {
-    showAuthError(errEl, 'Las contraseñas no coinciden.'); return;
-  }
-  if (password.length < 6) {
-    showAuthError(errEl, 'La contraseña debe tener al menos 6 caracteres.'); return;
-  }
-
-  try {
-    document.getElementById('register-btn').disabled = true;
-    const data     = await apiFetch('/auth/register', { method: 'POST', body: JSON.stringify({ first_name, last_name, document_number, password }) });
-    currentToken   = data.token;
-    currentStudent = data.student;
-    localStorage.setItem('mc_token', currentToken);
-    showMainApp();
-    await loadCurriculum();
-    toast('Registro exitoso. Semestre 1 matriculado automáticamente.', 'success');
-  } catch (err) {
-    showAuthError(errEl, err.message || 'Error al registrarse.');
-  } finally {
-    document.getElementById('register-btn').disabled = false;
-  }
-});
-
-function showAuthError(el, msg) {
+function toast(msg, tipo = 'ok', ms = 4000) {
+  const z = document.getElementById('toasts');
+  const el = document.createElement('div');
+  el.className = 'toast ' + tipo;
   el.textContent = msg;
-  el.hidden      = false;
+  z.appendChild(el);
+  setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 300); }, ms);
 }
 
-// Logout
-document.getElementById('logout-btn').addEventListener('click', () => {
-  currentToken     = null;
-  currentStudent   = null;
-  currentCurriculum = null;
+function ocultar(id)  { document.getElementById(id).classList.add('oculto'); }
+function mostrar(id)  { document.getElementById(id).classList.remove('oculto'); }
+function getEl(id)    { return document.getElementById(id); }
+function setEl(id, v) { getEl(id).textContent = v; }
+
+function iniciales(nombre, apellido) {
+  return ((nombre?.[0] || '') + (apellido?.[0] || '')).toUpperCase();
+}
+
+// ── Auth — Tabs ───────────────────────────────────────
+function mostrarLogin() {
+  mostrar('form-login'); ocultar('form-registro');
+  getEl('tab-login').classList.add('activo');
+  getEl('tab-registro').classList.remove('activo');
+  ocultar('error-login'); ocultar('error-registro');
+}
+
+function mostrarRegistro() {
+  mostrar('form-registro'); ocultar('form-login');
+  getEl('tab-registro').classList.add('activo');
+  getEl('tab-login').classList.remove('activo');
+  ocultar('error-login'); ocultar('error-registro');
+}
+
+function mostrarErrorAuth(id, msg) {
+  const el = getEl(id);
+  el.textContent = msg;
+  el.classList.remove('oculto');
+}
+
+// ── Auth — Login ──────────────────────────────────────
+getEl('btn-login').addEventListener('click', async () => {
+  const cedula   = getEl('login-cedula').value.trim();
+  const password = getEl('login-pass').value;
+  ocultar('error-login');
+  if (!cedula || !password) { mostrarErrorAuth('error-login', 'Ingresa cédula y contraseña.'); return; }
+
+  const btn = getEl('btn-login');
+  btn.disabled = true; btn.textContent = 'Ingresando…';
+  try {
+    const d = await api('/auth/login', { method: 'POST', body: JSON.stringify({ cedula, password }) });
+    token = d.token;
+    estudiante = d.estudiante;
+    localStorage.setItem('mc_token', token);
+    iniciarApp();
+  } catch (e) {
+    mostrarErrorAuth('error-login', e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Ingresar';
+  }
+});
+
+['login-cedula','login-pass'].forEach(id =>
+  getEl(id).addEventListener('keydown', e => { if (e.key === 'Enter') getEl('btn-login').click(); })
+);
+
+// ── Auth — Registro ───────────────────────────────────
+getEl('btn-registro').addEventListener('click', async () => {
+  const nombre   = getEl('reg-nombre').value.trim();
+  const apellido = getEl('reg-apellido').value.trim();
+  const cedula   = getEl('reg-cedula').value.trim();
+  const password = getEl('reg-pass').value;
+  const confirm  = getEl('reg-confirm').value;
+  ocultar('error-registro');
+
+  if (!nombre || !apellido || !cedula || !password)
+    return mostrarErrorAuth('error-registro', 'Completa todos los campos.');
+  if (password !== confirm)
+    return mostrarErrorAuth('error-registro', 'Las contraseñas no coinciden.');
+  if (password.length < 6)
+    return mostrarErrorAuth('error-registro', 'La contraseña debe tener mínimo 6 caracteres.');
+
+  const btn = getEl('btn-registro');
+  btn.disabled = true; btn.textContent = 'Creando cuenta…';
+  try {
+    const d = await api('/auth/registrar', { method: 'POST', body: JSON.stringify({ nombre, apellido, cedula, password }) });
+    token = d.token;
+    estudiante = d.estudiante;
+    localStorage.setItem('mc_token', token);
+    iniciarApp();
+    toast(d.msg, 'ok');
+  } catch (e) {
+    mostrarErrorAuth('error-registro', e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Crear cuenta';
+  }
+});
+
+// ── Arranque ──────────────────────────────────────────
+async function arrancar() {
+  if (!token) { mostrar('pantalla-auth'); return; }
+  try {
+    const d = await api('/auth/perfil');
+    estudiante = d.estudiante;
+    iniciarApp();
+  } catch {
+    token = '';
+    localStorage.removeItem('mc_token');
+    mostrar('pantalla-auth');
+  }
+}
+
+async function iniciarApp() {
+  ocultar('pantalla-auth');
+  mostrar('app');
+  await cargarMalla();
+}
+
+// ── Logout ────────────────────────────────────────────
+getEl('btn-logout').addEventListener('click', () => {
+  token = ''; estudiante = null; malla = null;
   localStorage.removeItem('mc_token');
-  if (cyInstance) { cyInstance.destroy(); cyInstance = null; }
-  showAuthScreen();
+  if (cy) { cy.destroy(); cy = null; }
+  ocultar('app');
+  mostrar('pantalla-auth');
+  mostrarLogin();
   toast('Sesión cerrada.', 'info');
 });
 
-// ── Navegación ────────────────────────────────────────────────
-const TAB_TITLES = { malla: 'Malla Semestral', grafo: 'Grafo de Prerrequisitos', electivas: 'Electivas y Profundización' };
-
-document.querySelectorAll('.nav-item').forEach(btn => {
-  btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+// ── Navegación ────────────────────────────────────────
+document.querySelectorAll('.nav-btn').forEach(btn => {
+  btn.addEventListener('click', () => cambiarTab(btn.dataset.tab));
 });
 
-function switchTab(tab) {
-  activeTab = tab;
-  document.querySelectorAll('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
-  document.querySelectorAll('.tab-pane').forEach(p => p.classList.toggle('active', p.id === `tab-${tab}`));
-  document.getElementById('page-title').textContent = TAB_TITLES[tab] || tab;
+function cambiarTab(tab) {
+  tabActual = tab;
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('activo', b.dataset.tab === tab));
+  document.querySelectorAll('.tab-panel').forEach(p => {
+    if (p.id === 'tab-' + tab) p.classList.remove('oculto');
+    else p.classList.add('oculto');
+  });
+  const titulos = { malla: 'Malla Semestral', grafo: 'Grafo de Prerrequisitos', electivas: 'Electivas y Profundización' };
+  setEl('page-titulo', titulos[tab] || tab);
 
-  // Cerrar sidebar en móvil al navegar
-  if (window.innerWidth < 768) closeSidebar();
+  if (tab === 'grafo' && malla) setTimeout(construirGrafo, 80);
+  if (tab === 'electivas' && malla) pintarElectivas();
 
-  if (tab === 'grafo' && currentCurriculum) setTimeout(() => buildGraph(), 80);
-  if (tab === 'electivas' && currentCurriculum) renderElectivas();
+  if (window.innerWidth < 768) cerrarSidebar();
 }
 
-// Menú hamburguesa móvil
-document.getElementById('menu-toggle').addEventListener('click', () => {
-  sidebar.classList.toggle('sidebar-open');
-});
-function closeSidebar() { sidebar.classList.remove('sidebar-open'); }
+// ── Sidebar móvil ─────────────────────────────────────
+function toggleSidebar() { getEl('sidebar').classList.toggle('abierto'); }
+function cerrarSidebar() { getEl('sidebar').classList.remove('abierto'); }
 document.addEventListener('click', e => {
-  if (!e.target.closest('.sidebar') && !e.target.closest('#menu-toggle')) closeSidebar();
+  if (!e.target.closest('.sidebar') && !e.target.closest('#menu-toggle')) cerrarSidebar();
 });
 
-// ── Currículo ─────────────────────────────────────────────────
-async function loadCurriculum() {
-  if (!currentStudent) return;
+// ── Carga de malla ────────────────────────────────────
+async function cargarMalla() {
   try {
-    const data = await apiFetch(`/students/${currentStudent.id}/curriculum`);
-    currentCurriculum = data;
-    renderAll(data);
-  } catch (err) {
-    toast(err.message || 'Error al cargar la malla.', 'error');
-  }
+    const d = await api(`/students/${estudiante.id}/malla`);
+    malla = d;
+    pintarTodo(d);
+  } catch (e) { toast(e.message, 'error'); }
 }
 
-function renderAll(data) {
-  updateSidebar(data);
-  buildAreaFilters(data);
-  renderCurriculumGrid(data);
-  if (activeTab === 'grafo')    buildGraph();
-  if (activeTab === 'electivas') renderElectivas();
+function pintarTodo(d) {
+  actualizarSidebar(d);
+  construirFiltros(d);
+  pintarGrid(d);
+  if (tabActual === 'grafo')    setTimeout(construirGrafo, 80);
+  if (tabActual === 'electivas') pintarElectivas();
 }
 
-// ── Sidebar ───────────────────────────────────────────────────
-function updateSidebar(data) {
-  const s = currentStudent;
-  document.getElementById('sidebar-avatar').textContent = initials(s.first_name, s.last_name);
-  document.getElementById('sidebar-name').textContent   = `${s.first_name} ${s.last_name}`;
-  document.getElementById('sidebar-doc').textContent    = s.document_number;
+// ── Sidebar datos ─────────────────────────────────────
+function actualizarSidebar(d) {
+  setEl('avatar',         iniciales(estudiante.nombre, estudiante.apellido));
+  setEl('perfil-nombre',  `${estudiante.nombre} ${estudiante.apellido}`);
+  setEl('perfil-cedula',  estudiante.cedula);
+  setEl('st-aprobadas',   d.resumen.aprobadas);
+  setEl('st-matriculadas',d.resumen.matriculadas);
+  setEl('st-bloqueadas',  d.resumen.bloqueadas);
+  setEl('st-promedio',    d.promedio.toFixed(2));
 
-  document.getElementById('sb-approved').textContent  = data.summary.approved;
-  document.getElementById('sb-enrolled').textContent  = data.summary.enrolled + data.summary.available;
-  document.getElementById('sb-blocked').textContent   = data.summary.blocked;
-  document.getElementById('sb-gpa').textContent       = data.gpa.toFixed(2);
-
-  const total = data.courses.length;
-  const pct   = total ? (data.summary.approved / total) * 100 : 0;
-  setProgress(pct);
+  const pct = d.materias.length ? (d.resumen.aprobadas / d.materias.length) * 100 : 0;
+  const circ = 2 * Math.PI * 32;
+  const fill = getEl('anillo-fill');
+  fill.style.strokeDashoffset = circ - (pct / 100) * circ;
+  setEl('anillo-pct', Math.round(pct) + '%');
 }
 
-// ── Filtros de área ───────────────────────────────────────────
-function buildAreaFilters(data) {
-  const areas     = [...new Set(data.courses.map(c => c.area))].sort();
-  const container = document.getElementById('area-filters');
-  container.innerHTML = '<button class="pill active" data-filter="all">Todas las áreas</button>';
-  areas.forEach(area => {
-    const btn = document.createElement('button');
-    btn.className    = 'pill';
-    btn.dataset.filter = area;
-    btn.textContent  = area;
-    container.appendChild(btn);
+// ── Filtros de área ───────────────────────────────────
+function construirFiltros(d) {
+  const areas = [...new Set(d.materias.map(m => m.area))].sort();
+  const cont = getEl('filtros-area');
+  cont.innerHTML = '<button class="pill activo" data-area="todas">Todas las áreas</button>';
+  areas.forEach(a => {
+    const b = document.createElement('button');
+    b.className = 'pill'; b.dataset.area = a; b.textContent = a;
+    cont.appendChild(b);
   });
-  container.querySelectorAll('.pill').forEach(btn => {
-    btn.addEventListener('click', () => {
-      container.querySelectorAll('.pill').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      activeAreaFilter = btn.dataset.filter;
-      renderCurriculumGrid(currentCurriculum);
-    });
-  });
+  cont.querySelectorAll('.pill').forEach(b => b.addEventListener('click', () => {
+    cont.querySelectorAll('.pill').forEach(x => x.classList.remove('activo'));
+    b.classList.add('activo');
+    areaFiltro = b.dataset.area;
+    pintarGrid(malla);
+  }));
 }
 
-// ── Grid de malla ─────────────────────────────────────────────
-function renderCurriculumGrid(data) {
-  const grid     = document.getElementById('curriculum-grid');
-  if (!grid) return;
-
-  const filtered = activeAreaFilter === 'all'
-    ? data.courses
-    : data.courses.filter(c => c.area === activeAreaFilter);
-
-  const semesters = new Map();
-  filtered.forEach(c => {
-    if (!semesters.has(c.semester)) semesters.set(c.semester, []);
-    semesters.get(c.semester).push(c);
+// ── Grid principal ────────────────────────────────────
+function pintarGrid(d) {
+  const grid = getEl('grid-malla');
+  const filtradas = areaFiltro === 'todas' ? d.materias : d.materias.filter(m => m.area === areaFiltro);
+  const semMap = new Map();
+  filtradas.forEach(m => {
+    if (!semMap.has(m.semestre)) semMap.set(m.semestre, []);
+    semMap.get(m.semestre).push(m);
   });
-
-  const unlocked = new Set(data.unlockedSemesters);
-
+  const desbloq = new Set(d.semestresDesbloqueados);
   grid.innerHTML = '';
 
-  [...semesters.entries()].sort((a, b) => a[0] - b[0]).forEach(([sem, courses]) => {
-    const isUnlocked     = unlocked.has(sem);
-    const stats          = data.semesterStats[sem] || {};
-    const semApproved    = stats.approvedCredits || 0;
-    const semTotal       = stats.total || 0;
-    const semComplete    = isUnlocked && semApproved >= MIN_CREDITS;
-    const isNextSem      = !isUnlocked && unlocked.has(sem - 1);
-    const allCoursesSem  = data.courses.filter(c => c.semester === sem);
+  [...semMap.entries()].sort((a, b) => a[0] - b[0]).forEach(([sem, lista]) => {
+    const unlocked  = desbloq.has(sem);
+    const stats     = d.statsSem[sem] || { total: 0, aprobados: 0 };
+    const completo  = unlocked && stats.aprobados >= 12;
 
     const col = document.createElement('div');
-    col.className = `semester-col ${isUnlocked ? '' : 'semester-locked-col'}`;
+    col.className = 'sem-col' + (unlocked ? '' : ' sem-bloqueado');
 
-    // Header semestre
-    const header = document.createElement('div');
-    header.className = 'sem-header';
+    // Cabecera del semestre
+    const badgeClass = completo ? 'badge-ok' : unlocked ? 'badge-activo' : 'badge-lock';
+    const badgeTxt   = completo ? '✓ Completado' : unlocked ? '◎ En curso' : '🔒 Bloqueado';
+    const pctBar     = stats.total ? Math.min(100, (stats.aprobados / stats.total) * 100) : 0;
 
-    const statusIcon = isUnlocked
-      ? (semComplete ? '✓' : '◎')
-      : '🔒';
-    const statusClass = semComplete ? 'sem-complete' : (isUnlocked ? 'sem-active' : 'sem-locked');
-
-    header.innerHTML = `
-      <div class="sem-title-row">
-        <span class="sem-num">Semestre ${sem}</span>
-        <span class="sem-badge ${statusClass}">${statusIcon} ${semComplete ? 'Completado' : (isUnlocked ? 'En curso' : 'Bloqueado')}</span>
-      </div>
-      <div class="sem-credits-row">
-        <span class="sem-credits-bar-wrap">
-          <span class="sem-credits-bar" style="width:${semTotal ? Math.min(100, (semApproved/semTotal)*100) : 0}%"></span>
-        </span>
-        <span class="sem-credits-text">${semApproved}/${semTotal} cr. aprobados</span>
+    col.innerHTML = `
+      <div class="sem-header">
+        <div class="sem-fila-titulo">
+          <span class="sem-num">Semestre ${sem}</span>
+          <span class="sem-badge ${badgeClass}">${badgeTxt}</span>
+        </div>
+        <div class="sem-barra-wrap">
+          <div class="sem-barra-fill" style="width:${pctBar}%"></div>
+        </div>
+        <div class="sem-cr-txt">${stats.aprobados}/${stats.total} cr. aprobados</div>
       </div>
     `;
 
-    col.appendChild(header);
-
-    if (!isUnlocked) {
-      // Semestre bloqueado: mostrar placeholder
-      const lockCard = document.createElement('div');
-      lockCard.className = 'semester-lock-placeholder';
-      const prevSemApproved = (data.semesterStats[sem - 1] || {}).approvedCredits || 0;
-      const needed = MIN_CREDITS - prevSemApproved;
-      lockCard.innerHTML = `
-        <div class="lock-icon">🔒</div>
-        <div class="lock-msg">Aprueba ${needed > 0 ? `${needed} crédito(s) más del semestre ${sem-1}` : `el semestre ${sem-1}`} para desbloquear</div>
-      `;
-      col.appendChild(lockCard);
-
-      // Mostrar cursos en gris para que se vea qué viene
-      courses.forEach(course => col.appendChild(buildCourseCard(course, false)));
+    if (!unlocked) {
+      const prev = d.statsSem[sem - 1] || { aprobados: 0 };
+      const needed = Math.max(0, 12 - prev.aprobados);
+      col.innerHTML += `<div class="sem-lock-msg">🔒 Necesitas ${needed} cr. más del semestre ${sem - 1}</div>`;
+      lista.forEach(m => col.appendChild(tarjetaMateria(m, false)));
     } else {
-      // Check if semester needs enrollment
-      const hasEnrolledOrGraded = allCoursesSem.some(c => ['enrolled','approved','failed'].includes(c.status));
-      const hasAvailable        = allCoursesSem.some(c => c.status === 'available');
-
-      if (!hasEnrolledOrGraded && hasAvailable && sem > 1) {
-        const enrollBtn = document.createElement('button');
-        enrollBtn.className = 'btn-enroll-sem';
-        enrollBtn.innerHTML = `📋 Matricular Semestre ${sem}`;
-        enrollBtn.addEventListener('click', () => openEnrollModal(sem, data));
-        col.appendChild(enrollBtn);
+      // Botón matricular (solo si hay materias disponibles y es sem > 1)
+      const hayDisp   = d.materias.filter(m => m.semestre === sem && m.estado === 'disponible').length > 0;
+      const hayInscritas = d.materias.filter(m => m.semestre === sem && ['matriculada','aprobada','reprobada'].includes(m.estado)).length > 0;
+      if (sem > 1 && hayDisp && !hayInscritas) {
+        const btn = document.createElement('button');
+        btn.className = 'btn-matricular-sem';
+        btn.textContent = `📋 Matricular Semestre ${sem}`;
+        btn.onclick = () => abrirModal(sem, d);
+        col.appendChild(btn);
       }
-
-      courses.forEach(course => col.appendChild(buildCourseCard(course, true)));
+      lista.forEach(m => col.appendChild(tarjetaMateria(m, true)));
     }
 
     grid.appendChild(col);
   });
 }
 
-// ── Card de materia ───────────────────────────────────────────
-function buildCourseCard(course, isUnlocked) {
+// ── Tarjeta de materia ────────────────────────────────
+function tarjetaMateria(m, desbloqueado) {
   const div = document.createElement('div');
-  div.className  = `course-card ${course.status}`;
-  div.dataset.code = course.code;
+  div.className = `materia-card ${m.estado}`;
+  div.dataset.codigo = m.codigo;
 
-  const reqs    = course.prerequisites.length ? course.prerequisites.join(', ') : 'Sin prerrequisitos';
-  const missing = course.missingPrerequisites?.length
-    ? `<div class="c-missing">⚠ Faltan: ${course.missingPrerequisites.join(', ')}</div>`
-    : '';
+  const prereqsTxt = m.prereqs.length ? m.prereqs.join(', ') : 'Sin prerrequisitos';
+  const faltanHtml = m.faltanPrereqs?.length
+    ? `<div class="mat-falta">⚠ Prereqs: ${m.faltanPrereqs.join(', ')}</div>` : '';
 
-  let gradeSection = '';
-
-  if (isUnlocked && course.status !== 'semester-locked' && course.status !== 'blocked') {
-    if (course.status === 'approved' || course.status === 'failed' || course.status === 'enrolled') {
-      // CRUD: mostrar nota actual + editar/eliminar
-      const gradeColor = course.grade === null ? '#94a3b8' : (course.grade >= 3.0 ? '#10b981' : '#ef4444');
-      const gradeDisplay = course.grade !== null ? `★ ${course.grade}` : 'Sin nota';
-      gradeSection = `
-        <div class="grade-section">
-          <span class="grade-badge" style="color:${gradeColor}">${gradeDisplay}</span>
-          <div class="grade-actions">
-            <button class="btn-grade-edit" data-code="${course.code}" title="Editar nota">✏</button>
-            <button class="btn-grade-delete" data-code="${course.code}" title="Quitar materia">✕</button>
+  let notaHtml = '';
+  if (desbloqueado && m.estado !== 'bloqueada' && m.estado !== 'bloqueado_sem') {
+    if (m.estado === 'aprobada' || m.estado === 'reprobada' || m.estado === 'matriculada') {
+      const color = m.nota === null ? '#94a3b8' : m.nota >= 3.0 ? '#10b981' : '#ef4444';
+      const txt   = m.nota !== null ? `★ ${m.nota}` : 'Sin nota';
+      notaHtml = `
+        <div class="nota-seccion">
+          <span class="nota-badge" style="color:${color}">${txt}</span>
+          <div class="nota-acciones">
+            <button class="btn-editar-nota" data-codigo="${m.codigo}">✏ Editar</button>
+            <button class="btn-quitar"      data-codigo="${m.codigo}">✕ Quitar</button>
           </div>
         </div>
-        <div class="grade-edit-row" id="edit-${course.code}" hidden>
-          <input type="number" class="grade-input" step="0.1" min="1.0" max="5.0"
-                 placeholder="Nota (1.0-5.0)" value="${course.grade ?? ''}"
-                 data-code="${course.code}" />
-          <button class="btn-grade-save" data-code="${course.code}">✓</button>
-          <button class="btn-grade-cancel" data-code="${course.code}">✕</button>
-        </div>
-      `;
-    } else if (course.status === 'available') {
-      // Disponible pero no matriculada: mostrar entrada directa de nota (matrícula implícita)
-      gradeSection = `
-        <div class="grade-section">
-          <span class="grade-badge" style="color:#94a3b8">Sin matricular</span>
-          <div class="grade-actions">
-            <button class="btn-grade-enroll" data-code="${course.code}" title="Matricular y registrar nota">+ Nota</button>
+        <div class="nota-form oculto" id="nf-${m.codigo}">
+          <input type="number" class="nota-input" step="0.1" min="1.0" max="5.0"
+                 placeholder="1.0 – 5.0" value="${m.nota ?? ''}"/>
+          <button class="btn-guardar-nota" data-codigo="${m.codigo}">✓</button>
+          <button class="btn-cancelar-nota" data-codigo="${m.codigo}">✕</button>
+        </div>`;
+    } else if (m.estado === 'disponible') {
+      notaHtml = `
+        <div class="nota-seccion">
+          <span class="nota-badge" style="color:#94a3b8">Sin nota</span>
+          <div class="nota-acciones">
+            <button class="btn-agregar-nota" data-codigo="${m.codigo}">+ Nota</button>
           </div>
         </div>
-        <div class="grade-edit-row" id="edit-${course.code}" hidden>
-          <input type="number" class="grade-input" step="0.1" min="1.0" max="5.0"
-                 placeholder="Nota (1.0-5.0)" data-code="${course.code}" />
-          <button class="btn-grade-save" data-code="${course.code}">✓</button>
-          <button class="btn-grade-cancel" data-code="${course.code}">✕</button>
-        </div>
-      `;
+        <div class="nota-form oculto" id="nf-${m.codigo}">
+          <input type="number" class="nota-input" step="0.1" min="1.0" max="5.0" placeholder="1.0 – 5.0"/>
+          <button class="btn-guardar-nota" data-codigo="${m.codigo}">✓</button>
+          <button class="btn-cancelar-nota" data-codigo="${m.codigo}">✕</button>
+        </div>`;
     }
   }
 
   div.innerHTML = `
-    <div class="c-header">
-      <span class="c-code">${course.code}</span>
-      <span class="status-dot ${course.status}" title="${statusLabel(course.status)}"></span>
+    <div class="mat-cab">
+      <span class="mat-cod">${m.codigo}</span>
+      <span class="dot-estado ${m.estado}"></span>
     </div>
-    <div class="c-name">${course.name}</div>
-    <div class="c-meta">
-      <span class="c-credits">◆ ${course.credits} cr.</span>
-      <span class="c-area-badge">${course.area.replace('ÁREA ', '').replace('CIENCIAS BÁSICA DE ', '')}</span>
+    <div class="mat-nombre">${m.nombre}</div>
+    <div class="mat-meta">
+      <span class="mat-cr">◆ ${m.creditos} cr.</span>
+      <span class="mat-area">${m.area}</span>
     </div>
-    <div class="c-reqs" title="Prerrequisitos: ${reqs}">Prereq: ${reqs}</div>
-    ${missing}
-    ${gradeSection}
+    <div class="mat-prereq" title="${prereqsTxt}">Prereq: ${prereqsTxt}</div>
+    ${faltanHtml}
+    ${notaHtml}
   `;
 
-  // Wire up grade CRUD events
-  wireCardEvents(div, course);
+  // Eventos CRUD
+  div.querySelector('.btn-editar-nota')?.addEventListener('click', () => {
+    mostrar('nf-' + m.codigo);
+    div.querySelector('.btn-editar-nota').style.display = 'none';
+  });
+  div.querySelector('.btn-agregar-nota')?.addEventListener('click', () => {
+    mostrar('nf-' + m.codigo);
+    div.querySelector('.btn-agregar-nota').style.display = 'none';
+  });
+  div.querySelector('.btn-cancelar-nota')?.addEventListener('click', () => {
+    ocultar('nf-' + m.codigo);
+    div.querySelector('.btn-editar-nota')  && (div.querySelector('.btn-editar-nota').style.display  = '');
+    div.querySelector('.btn-agregar-nota') && (div.querySelector('.btn-agregar-nota').style.display = '');
+  });
+  div.querySelector('.btn-guardar-nota')?.addEventListener('click', () => {
+    const input = div.querySelector('.nota-input');
+    const nota  = parseFloat(input.value);
+    if (isNaN(nota) || nota < 1 || nota > 5) { toast('Nota inválida (1.0 – 5.0)', 'error'); return; }
+    enviarNota(m.codigo, nota);
+  });
+  div.querySelector('.nota-input')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') div.querySelector('.btn-guardar-nota')?.click();
+  });
+  div.querySelector('.btn-quitar')?.addEventListener('click', () => {
+    if (confirm(`¿Quitar "${m.nombre}"?`)) quitarMateria(m.codigo);
+  });
 
   return div;
 }
 
-function wireCardEvents(div, course) {
-  // Edit button
-  const editBtn = div.querySelector('.btn-grade-edit');
-  if (editBtn) {
-    editBtn.addEventListener('click', () => {
-      div.querySelector(`#edit-${course.code}`).hidden = false;
-      editBtn.style.display = 'none';
-    });
-  }
-
-  // Enroll quick button
-  const enrollBtn = div.querySelector('.btn-grade-enroll');
-  if (enrollBtn) {
-    enrollBtn.addEventListener('click', () => {
-      div.querySelector(`#edit-${course.code}`).hidden = false;
-      enrollBtn.style.display = 'none';
-    });
-  }
-
-  // Cancel edit
-  const cancelBtn = div.querySelector('.btn-grade-cancel');
-  if (cancelBtn) {
-    cancelBtn.addEventListener('click', () => {
-      div.querySelector(`#edit-${course.code}`).hidden = true;
-      if (editBtn)   editBtn.style.display   = '';
-      if (enrollBtn) enrollBtn.style.display = '';
-    });
-  }
-
-  // Save grade
-  const saveBtn = div.querySelector('.btn-grade-save');
-  if (saveBtn) {
-    saveBtn.addEventListener('click', async () => {
-      const input = div.querySelector(`.grade-input[data-code="${course.code}"]`);
-      const grade = parseFloat(input.value);
-      if (isNaN(grade) || grade < 1.0 || grade > 5.0) {
-        toast('Nota inválida. Ingresa un valor entre 1.0 y 5.0', 'error'); return;
-      }
-      await submitGrade(course.code, grade, course.semester);
-    });
-  }
-
-  // Allow enter key in grade input
-  const gradeInput = div.querySelector(`.grade-input[data-code="${course.code}"]`);
-  if (gradeInput) {
-    gradeInput.addEventListener('keydown', async e => {
-      if (e.key === 'Enter') {
-        const grade = parseFloat(gradeInput.value);
-        if (!isNaN(grade) && grade >= 1.0 && grade <= 5.0) {
-          await submitGrade(course.code, grade, course.semester);
-        }
-      }
-    });
-  }
-
-  // Delete / remove
-  const deleteBtn = div.querySelector('.btn-grade-delete');
-  if (deleteBtn) {
-    deleteBtn.addEventListener('click', async () => {
-      if (!confirm(`¿Quitar "${course.name}" del historial?`)) return;
-      await removeCourse(course.code);
-    });
-  }
-}
-
-async function submitGrade(courseCode, grade, semester) {
+async function enviarNota(codigo, nota) {
   try {
-    // If course is 'available' (not enrolled), first enroll it for this semester
-    const courseData = currentCurriculum?.courses.find(c => c.code === courseCode);
-    if (courseData?.status === 'available') {
-      // Enroll single course implicitly - check credits
-      const semCourses = currentCurriculum.courses.filter(c => c.semester === semester && ['enrolled','approved','failed'].includes(c.status));
-      const enrolledCredits = semCourses.reduce((s, c) => s + c.credits, 0) + (courseData?.credits || 0);
-      if (enrolledCredits > MAX_CREDITS) {
-        toast(`Superarías el máximo de ${MAX_CREDITS} créditos en el semestre.`, 'error'); return;
-      }
-      // Enroll the course
-      const codes = [...semCourses.map(c => c.code), courseCode];
-      await apiFetch(`/students/${currentStudent.id}/enroll-semester`, {
-        method: 'POST',
-        body: JSON.stringify({ semester, course_codes: codes })
-      });
-    }
-
-    const data = await apiFetch(`/students/${currentStudent.id}/courses/${courseCode}`, {
-      method: 'PUT',
-      body: JSON.stringify({ grade })
-    });
-    currentCurriculum = data;
-    toast(data.message, grade >= 3.0 ? 'success' : 'warning');
-    renderAll(currentCurriculum);
-  } catch (err) {
-    toast(err.message || 'Error al guardar nota.', 'error');
-  }
+    const d = await api(`/students/${estudiante.id}/nota/${codigo}`,
+      { method: 'PUT', body: JSON.stringify({ nota }) });
+    malla = d;
+    toast(d.msg, nota >= 3 ? 'ok' : 'warn');
+    pintarTodo(malla);
+  } catch (e) { toast(e.message, 'error'); }
 }
 
-async function removeCourse(courseCode) {
+async function quitarMateria(codigo) {
   try {
-    const data = await apiFetch(`/students/${currentStudent.id}/courses/${courseCode}`, { method: 'DELETE' });
-    currentCurriculum = data;
-    toast(data.message, 'success');
-    renderAll(currentCurriculum);
-  } catch (err) {
-    const deps = err.dependentCourses?.length
-      ? ' Dependen: ' + err.dependentCourses.map(d => d.code).join(', ')
-      : '';
-    toast((err.message || 'Error.') + deps, 'error');
-  }
+    const d = await api(`/students/${estudiante.id}/materia/${codigo}`, { method: 'DELETE' });
+    malla = d; toast(d.msg, 'ok'); pintarTodo(malla);
+  } catch (e) { toast(e.message, 'error'); }
 }
 
-// ── Modal de matrícula ────────────────────────────────────────
-function openEnrollModal(sem, data) {
-  enrollModalSem = sem;
-  const modal    = document.getElementById('enroll-modal');
-  document.getElementById('modal-title').textContent = `Matricular Semestre ${sem}`;
-  document.getElementById('enroll-feedback').hidden  = true;
+// ── Modal de matrícula ────────────────────────────────
+function abrirModal(sem, d) {
+  modalSem = sem;
+  setEl('modal-titulo', `Matricular Semestre ${sem}`);
+  ocultar('modal-error');
 
-  const semCourses   = data.courses.filter(c => c.semester === sem && (c.status === 'available' || c.status === 'blocked'));
-  const listEl       = document.getElementById('enroll-course-list');
-  listEl.innerHTML   = '';
+  const disponibles = d.materias.filter(m => m.semestre === sem && m.estado === 'disponible');
+  const lista = getEl('lista-matricula');
+  lista.innerHTML = '';
 
-  semCourses.forEach(c => {
-    const row = document.createElement('label');
-    row.className = `enroll-row ${c.status === 'blocked' ? 'enroll-blocked' : ''}`;
-    row.innerHTML = `
-      <input type="checkbox" class="enroll-check" value="${c.code}"
-             data-credits="${c.credits}"
-             ${c.status === 'blocked' ? 'disabled' : 'checked'} />
-      <div class="enroll-info">
-        <span class="enroll-code">${c.code}</span>
-        <span class="enroll-name">${c.name}</span>
-        ${c.status === 'blocked' ? `<span class="enroll-blocked-hint">Prerrequisitos pendientes</span>` : ''}
+  disponibles.forEach(m => {
+    const lbl = document.createElement('label');
+    lbl.className = 'mat-check-row';
+    lbl.innerHTML = `
+      <input type="checkbox" class="mat-chk" value="${m.codigo}" data-cr="${m.creditos}" checked/>
+      <div class="mat-check-info">
+        <span class="mat-cod">${m.codigo}</span>
+        <span class="mat-check-nombre">${m.nombre}</span>
       </div>
-      <span class="enroll-credits">${c.credits} cr.</span>
+      <span class="mat-check-cr">${m.creditos} cr.</span>
     `;
-    listEl.appendChild(row);
+    lista.appendChild(lbl);
   });
 
-  updateCreditsCount();
-  listEl.querySelectorAll('.enroll-check').forEach(cb => cb.addEventListener('change', updateCreditsCount));
+  actualizarContadorModal();
+  lista.querySelectorAll('.mat-chk').forEach(c => c.addEventListener('change', actualizarContadorModal));
 
-  modal.hidden = false;
+  mostrar('modal-matricula');
+  getEl('btn-confirmar-matricula').onclick = confirmarMatricula;
 }
 
-function updateCreditsCount() {
-  const checks   = document.querySelectorAll('.enroll-check:checked:not(:disabled)');
-  const total    = [...checks].reduce((s, cb) => s + Number(cb.dataset.credits), 0);
-  const el       = document.getElementById('selected-credits-count');
+function actualizarContadorModal() {
+  const checks = [...document.querySelectorAll('.mat-chk:checked')];
+  const total  = checks.reduce((s, c) => s + Number(c.dataset.cr), 0);
+  const el = getEl('cr-seleccionados');
   el.textContent = total;
-  el.className   = `credits-num ${total < MIN_CREDITS ? 'credits-low' : total > MAX_CREDITS ? 'credits-high' : 'credits-ok'}`;
+  el.className   = 'cr-num ' + (total < 12 ? 'cr-bajo' : total > 20 ? 'cr-alto' : 'cr-ok');
 }
 
-document.getElementById('modal-close').addEventListener('click', closeEnrollModal);
-document.getElementById('enroll-cancel').addEventListener('click', closeEnrollModal);
-document.getElementById('modal-backdrop').addEventListener('click', closeEnrollModal);
-
-function closeEnrollModal() {
-  document.getElementById('enroll-modal').hidden = true;
-  enrollModalSem = null;
+function cerrarModal() {
+  ocultar('modal-matricula');
+  modalSem = null;
 }
 
-document.getElementById('enroll-confirm').addEventListener('click', async () => {
-  const checks = [...document.querySelectorAll('.enroll-check:checked:not(:disabled)')];
-  const codes  = checks.map(cb => cb.value);
-  const total  = checks.reduce((s, cb) => s + Number(cb.dataset.credits), 0);
-  const fbEl   = document.getElementById('enroll-feedback');
+async function confirmarMatricula() {
+  const checks = [...document.querySelectorAll('.mat-chk:checked')];
+  const codigos = checks.map(c => c.value);
+  const total   = checks.reduce((s, c) => s + Number(c.dataset.cr), 0);
+  const errEl   = getEl('modal-error');
 
-  if (total < MIN_CREDITS) {
-    fbEl.textContent = `Mínimo ${MIN_CREDITS} créditos requeridos. Tienes ${total}.`;
-    fbEl.className   = 'enroll-feedback error';
-    fbEl.hidden      = false;
-    return;
+  if (total < 12 || total > 20) {
+    errEl.textContent = total < 12
+      ? `Mínimo 12 créditos. Tienes ${total}.`
+      : `Máximo 20 créditos. Tienes ${total}.`;
+    errEl.classList.remove('oculto'); return;
   }
-  if (total > MAX_CREDITS) {
-    fbEl.textContent = `Máximo ${MAX_CREDITS} créditos permitidos. Tienes ${total}.`;
-    fbEl.className   = 'enroll-feedback error';
-    fbEl.hidden      = false;
-    return;
-  }
+  ocultar('modal-error');
 
+  const btn = getEl('btn-confirmar-matricula');
+  btn.disabled = true; btn.textContent = 'Matriculando…';
   try {
-    document.getElementById('enroll-confirm').disabled = true;
-    const data = await apiFetch(`/students/${currentStudent.id}/enroll-semester`, {
-      method: 'POST',
-      body: JSON.stringify({ semester: enrollModalSem, course_codes: codes })
-    });
-    currentCurriculum = data;
-    toast(data.message, 'success');
-    closeEnrollModal();
-    renderAll(currentCurriculum);
-  } catch (err) {
-    fbEl.textContent = err.message || 'Error al matricular.';
-    fbEl.className   = 'enroll-feedback error';
-    fbEl.hidden      = false;
+    const d = await api(`/students/${estudiante.id}/matricular`,
+      { method: 'POST', body: JSON.stringify({ semestre: modalSem, codigos }) });
+    malla = d; toast(d.msg, 'ok');
+    cerrarModal(); pintarTodo(malla);
+  } catch (e) {
+    errEl.textContent = e.message; errEl.classList.remove('oculto');
   } finally {
-    document.getElementById('enroll-confirm').disabled = false;
+    btn.disabled = false; btn.textContent = 'Matricular';
   }
-});
+}
 
-// ── Búsqueda ──────────────────────────────────────────────────
-const searchInput    = document.getElementById('course-search');
-const searchDropdown = document.getElementById('search-dropdown');
+// ── Buscador ──────────────────────────────────────────
+getEl('buscador').addEventListener('input', function () {
+  const q  = this.value.trim().toLowerCase();
+  const dd = getEl('buscador-dropdown');
+  if (!q || !malla) { dd.classList.add('oculto'); return; }
 
-searchInput.addEventListener('input', () => {
-  const q = searchInput.value.trim().toLowerCase();
-  if (!q || !currentCurriculum) { searchDropdown.hidden = true; return; }
+  const res = malla.materias.filter(m =>
+    m.codigo.toLowerCase().includes(q) || m.nombre.toLowerCase().includes(q)
+  ).slice(0, 10);
 
-  const matches = currentCurriculum.courses.filter(c =>
-    c.code.toLowerCase().includes(q) || c.name.toLowerCase().includes(q)
-  );
-
-  searchDropdown.innerHTML = '';
-  if (!matches.length) {
-    searchDropdown.innerHTML = '<div class="search-item"><div class="search-item-name" style="color:var(--text3)">Sin resultados</div></div>';
-    searchDropdown.hidden = false;
-    return;
-  }
-
-  matches.slice(0, 10).forEach(c => {
-    const item = document.createElement('div');
-    item.className = 'search-item';
-    item.innerHTML = `
-      <div class="search-item-code">${c.code}</div>
-      <div class="search-item-name">${c.name}</div>
-      <div class="search-item-meta">Sem. ${c.semester} · ${c.credits} cr.
-        <span class="status-badge ${c.status}">${statusLabel(c.status)}</span>
-      </div>`;
-    item.addEventListener('click', () => {
-      searchDropdown.hidden = true;
-      searchInput.value    = '';
-      if (activeTab !== 'malla') switchTab('malla');
-      setTimeout(() => {
-        const card = document.querySelector(`.course-card[data-code="${c.code}"]`);
-        if (card) { card.classList.add('highlight-search'); card.scrollIntoView({ behavior:'smooth', block:'center' }); setTimeout(() => card.classList.remove('highlight-search'), 3000); }
-      }, 150);
+  dd.innerHTML = '';
+  if (!res.length) {
+    dd.innerHTML = '<div class="dd-item" style="color:#475569">Sin resultados</div>';
+  } else {
+    res.forEach(m => {
+      const it = document.createElement('div');
+      it.className = 'dd-item';
+      it.innerHTML = `<span class="dd-cod">${m.codigo}</span><span class="dd-nom">${m.nombre}</span>
+        <span class="dd-meta">Sem ${m.semestre} · ${m.creditos}cr · <span class="dot-est ${m.estado}">${estadoLabel(m.estado)}</span></span>`;
+      it.onclick = () => {
+        dd.classList.add('oculto'); this.value = '';
+        if (tabActual !== 'malla') cambiarTab('malla');
+        setTimeout(() => {
+          const card = document.querySelector(`.materia-card[data-codigo="${m.codigo}"]`);
+          if (card) { card.classList.add('resaltada'); card.scrollIntoView({ behavior:'smooth', block:'center' }); setTimeout(() => card.classList.remove('resaltada'), 2500); }
+        }, 150);
+      };
+      dd.appendChild(it);
     });
-    searchDropdown.appendChild(item);
-  });
-  searchDropdown.hidden = false;
+  }
+  dd.classList.remove('oculto');
 });
-
 document.addEventListener('click', e => {
-  if (!e.target.closest('.search-wrap')) searchDropdown.hidden = true;
+  if (!e.target.closest('.busqueda-wrap')) getEl('buscador-dropdown').classList.add('oculto');
 });
 
-// ── Grafo Cytoscape ───────────────────────────────────────────
-function buildGraph() {
-  if (!currentCurriculum) return;
+function estadoLabel(e) {
+  return { aprobada:'Aprobada', reprobada:'Reprobada', matriculada:'Matriculada',
+           disponible:'Disponible', bloqueada:'Bloqueada', bloqueado_sem:'Bloqueado' }[e] || e;
+}
 
-  const container = document.getElementById('cy-container');
-  const emptyMsg  = document.getElementById('grafo-empty');
-  if (emptyMsg) emptyMsg.remove();
+// ── Grafo Cytoscape ───────────────────────────────────
+const COLOR_ESTADO = {
+  aprobada:'#10b981', matriculada:'#3b82f6', disponible:'#f59e0b',
+  reprobada:'#ef4444', bloqueada:'#4b5563',  bloqueado_sem:'#1e293b'
+};
 
-  const statusColor = { approved:'#10b981', enrolled:'#3b82f6', available:'#f59e0b', failed:'#ef4444', blocked:'#4b5563', 'semester-locked':'#1e293b' };
+function construirGrafo() {
+  if (!malla) return;
+  const empty = getEl('cy-empty');
+  if (empty) empty.remove();
 
-  const nodes = currentCurriculum.courses.map(c => ({
-    data: { id: c.code, label: c.code, fullName: c.name, credits: c.credits, semester: c.semester, status: c.status, area: c.area, color: statusColor[c.status] || '#4b5563' }
+  const nodes = malla.materias.map(m => ({
+    data: { id: m.codigo, label: m.codigo, nombre: m.nombre, creditos: m.creditos,
+            semestre: m.semestre, estado: m.estado, color: COLOR_ESTADO[m.estado] || '#4b5563' }
   }));
-
   const edges = [];
-  currentCurriculum.courses.forEach(c => {
-    c.prerequisites.forEach(prereq => {
-      edges.push({ data: { source: prereq, target: c.code, id: `${prereq}-${c.code}` } });
-    });
-  });
+  malla.materias.forEach(m => m.prereqs.forEach(p => edges.push({ data: { source: p, target: m.codigo } })));
 
-  if (cyInstance) cyInstance.destroy();
-
-  cyInstance = cytoscape({
-    container,
-    elements: { nodes, edges },
+  if (cy) cy.destroy();
+  cy = cytoscape({
+    container: getEl('cy-container'),
+    elements:  { nodes, edges },
     style: [
-      { selector: 'node',                   style: { 'background-color':'data(color)', 'label':'data(label)', 'color':'#e2e8f0', 'font-family':'Space Mono, monospace', 'font-size':'9px', 'font-weight':'bold', 'text-valign':'center', 'text-halign':'center', 'width':46, 'height':46, 'border-width':2, 'border-color':'data(color)', 'text-outline-color':'#080c14', 'text-outline-width':2 } },
-      { selector: 'node[status="approved"]',        style: { 'background-color':'#10b981', 'border-color':'#6ee7b7' } },
-      { selector: 'node[status="enrolled"]',        style: { 'background-color':'#3b82f6', 'border-color':'#93c5fd' } },
-      { selector: 'node[status="available"]',       style: { 'background-color':'#d97706', 'border-color':'#fcd34d' } },
-      { selector: 'node[status="failed"]',          style: { 'background-color':'#ef4444', 'border-color':'#f87171' } },
-      { selector: 'node[status="blocked"]',         style: { 'background-color':'#334155', 'border-color':'#475569', 'opacity':0.7 } },
-      { selector: 'node[status="semester-locked"]', style: { 'background-color':'#1e293b', 'border-color':'#334155', 'opacity':0.4 } },
-      { selector: 'node:selected',                  style: { 'border-width':3, 'border-color':'#3b82f6', 'underlay-color':'#3b82f6', 'underlay-padding':4, 'underlay-opacity':0.4 } },
-      { selector: 'edge',                           style: { 'width':1.5, 'line-color':'#334155', 'target-arrow-color':'#475569', 'target-arrow-shape':'triangle', 'curve-style':'bezier', 'arrow-scale':0.8, 'opacity':0.6 } },
-      { selector: 'edge.highlighted',               style: { 'line-color':'#3b82f6', 'target-arrow-color':'#3b82f6', 'width':2.5, 'opacity':1 } },
-      { selector: 'node.faded',                     style: { 'opacity':0.15 } },
-      { selector: 'edge.faded',                     style: { 'opacity':0.08 } }
+      { selector:'node', style:{ 'background-color':'data(color)', label:'data(label)', color:'#e2e8f0',
+        'font-family':'Space Mono,monospace', 'font-size':'9px', 'font-weight':'bold',
+        'text-valign':'center','text-halign':'center', width:46, height:46,
+        'border-width':2, 'border-color':'data(color)', 'text-outline-color':'#080c14', 'text-outline-width':2 }},
+      { selector:'node[estado="aprobada"]',    style:{ 'background-color':'#10b981','border-color':'#6ee7b7' }},
+      { selector:'node[estado="matriculada"]', style:{ 'background-color':'#3b82f6','border-color':'#93c5fd' }},
+      { selector:'node[estado="disponible"]',  style:{ 'background-color':'#d97706','border-color':'#fcd34d' }},
+      { selector:'node[estado="reprobada"]',   style:{ 'background-color':'#ef4444','border-color':'#f87171' }},
+      { selector:'node[estado="bloqueada"]',   style:{ 'background-color':'#334155','border-color':'#475569','opacity':0.7 }},
+      { selector:'node[estado="bloqueado_sem"]',style:{ 'background-color':'#1e293b','border-color':'#334155','opacity':0.4 }},
+      { selector:'edge', style:{ width:1.5,'line-color':'#334155','target-arrow-color':'#475569',
+        'target-arrow-shape':'triangle','curve-style':'bezier','arrow-scale':0.8, opacity:0.6 }},
+      { selector:'edge.hl', style:{ 'line-color':'#3b82f6','target-arrow-color':'#3b82f6', width:2.5, opacity:1 }},
+      { selector:'node.faded', style:{ opacity:0.15 }},
+      { selector:'edge.faded', style:{ opacity:0.07 }},
     ],
-    layout: { name:'breadthfirst', directed:true, spacingFactor:1.6, padding:30, avoidOverlap:true },
-    userZoomingEnabled: true,
-    userPanningEnabled: true
+    layout:{ name:'breadthfirst', directed:true, spacingFactor:1.6, padding:30, avoidOverlap:true },
+    userZoomingEnabled:true, userPanningEnabled:true,
   });
 
-  const tooltip = document.getElementById('cy-tooltip');
-  cyInstance.on('mouseover', 'node', e => {
+  const tip = getEl('cy-tooltip');
+  cy.on('mouseover','node', e => {
     const d = e.target.data();
-    tooltip.hidden  = false;
-    tooltip.innerHTML = `<div class="tt-code">${d.id}</div><div class="tt-name">${d.fullName}</div><div class="tt-row">Sem. ${d.semester} &nbsp;·&nbsp; ${d.credits} cr.</div><div class="tt-row"><span class="status-badge ${d.status}">${statusLabel(d.status)}</span></div>`;
-    cyInstance.elements().addClass('faded');
-    e.target.removeClass('faded').connectedEdges().removeClass('faded').addClass('highlighted');
+    tip.innerHTML = `<b>${d.id}</b><br>${d.nombre}<br>Sem. ${d.semestre} · ${d.creditos} cr.<br><i>${estadoLabel(d.estado)}</i>`;
+    tip.classList.remove('oculto');
+    cy.elements().addClass('faded');
+    e.target.removeClass('faded').connectedEdges().removeClass('faded').addClass('hl');
     e.target.neighborhood('node').removeClass('faded');
   });
-  cyInstance.on('mousemove', e => {
-    if (!tooltip.hidden) { tooltip.style.left = (e.originalEvent.clientX + 16) + 'px'; tooltip.style.top = (e.originalEvent.clientY + 16) + 'px'; }
+  cy.on('mousemove', e => {
+    tip.style.left = (e.originalEvent.clientX + 14) + 'px';
+    tip.style.top  = (e.originalEvent.clientY + 14) + 'px';
   });
-  cyInstance.on('mouseout', 'node', () => { tooltip.hidden = true; cyInstance.elements().removeClass('faded highlighted'); });
-
-  document.getElementById('grafo-fit').onclick    = () => cyInstance.fit(undefined, 40);
-  document.getElementById('grafo-layout').onclick = () => cyInstance.layout({ name:'breadthfirst', directed:true, spacingFactor:1.6, padding:30, avoidOverlap:true }).run();
+  cy.on('mouseout','node', () => {
+    tip.classList.add('oculto');
+    cy.elements().removeClass('faded hl');
+  });
 }
+function cyAjustar()     { cy?.fit(undefined, 40); }
+function cyReorganizar() { cy?.layout({ name:'breadthfirst', directed:true, spacingFactor:1.6, padding:30, avoidOverlap:true }).run(); }
 
-// ── Electivas ─────────────────────────────────────────────────
-function renderElectivas() {
-  const grid = document.getElementById('lineas-grid');
+// ── Electivas ─────────────────────────────────────────
+const LINEAS = [
+  { nombre:'Recursos Hídricos',    icon:'💧', color:'#3b82f6', bg:'rgba(59,130,246,.15)',  codigos:['453034','453043','453039'] },
+  { nombre:'Residuos y Suelos',    icon:'♻️', color:'#10b981', bg:'rgba(16,185,129,.15)', codigos:['453044','453048','453055'] },
+  { nombre:'Calidad del Aire',     icon:'🌫️', color:'#8b5cf6', bg:'rgba(139,92,246,.15)', codigos:['453030','453049']          },
+  { nombre:'Biotecnología',        icon:'🧬', color:'#f59e0b', bg:'rgba(245,158,11,.15)', codigos:['453109','453057','453026'] },
+  { nombre:'Gestión y Geomática',  icon:'🗺️', color:'#ec4899', bg:'rgba(236,72,153,.15)',  codigos:['453033','453037','453038','453047'] },
+];
+
+function pintarElectivas() {
+  const grid = getEl('lineas-grid');
   grid.innerHTML = '';
-
-  LINEAS.forEach(linea => {
-    const card    = document.createElement('div');
+  LINEAS.forEach(l => {
+    const card = document.createElement('div');
     card.className = 'linea-card';
-
-    const courses = linea.codes.map(code => {
-      const c = currentCurriculum?.courses.find(x => x.code === code);
-      return c || { code, name: code, status:'semester-locked', credits: 0 };
-    });
-
-    card.innerHTML = `
-      <div class="linea-header">
-        <div class="linea-icon" style="background:${linea.bg};color:${linea.color}">${linea.icon}</div>
-        <div>
-          <div class="linea-title">${linea.name}</div>
-          <div class="linea-count" style="color:${linea.color}">${linea.description}</div>
-        </div>
-      </div>
-      <div class="linea-body">
-        ${courses.map(c => `
-          <div class="elec-course-row">
-            <span class="elec-code">${c.code}</span>
-            <span class="elec-name">${c.name}</span>
-            <span class="status-badge ${c.status}">${statusLabel(c.status)}</span>
-          </div>`).join('')}
+    const items = l.codigos.map(c => {
+      const m = malla?.materias.find(x => x.codigo === c) || { codigo: c, nombre: c, estado:'bloqueado_sem' };
+      return `<div class="linea-materia">
+        <span class="mat-cod">${m.codigo}</span>
+        <span class="linea-mat-nombre">${m.nombre}</span>
+        <span class="dot-estado ${m.estado}" title="${estadoLabel(m.estado)}"></span>
       </div>`;
+    }).join('');
+    card.innerHTML = `
+      <div class="linea-head">
+        <div class="linea-icono" style="background:${l.bg};color:${l.color}">${l.icon}</div>
+        <div class="linea-titulo">${l.nombre}</div>
+      </div>
+      <div class="linea-cuerpo">${items}</div>`;
     grid.appendChild(card);
   });
 }
 
-// ── Exportar PDF ──────────────────────────────────────────────
-document.getElementById('export-pdf-btn').addEventListener('click', () => {
-  if (!currentCurriculum) { toast('Carga la malla primero.', 'error'); return; }
-
+// ── PDF ───────────────────────────────────────────────
+function exportarPDF() {
+  if (!malla) { toast('Carga la malla primero.', 'error'); return; }
   const { jsPDF } = window.jspdf;
-  const doc       = new jsPDF({ orientation:'portrait', unit:'mm', format:'a4' });
-  const student   = currentStudent;
-  const summary   = currentCurriculum.summary;
-  const courses   = currentCurriculum.courses;
-  const total     = courses.length;
-  const pct       = total ? Math.round((summary.approved / total) * 100) : 0;
+  const doc  = new jsPDF({ orientation:'portrait', unit:'mm', format:'a4' });
+  const est  = estudiante;
+  const res  = malla.resumen;
+  const total= malla.materias.length;
+  const pct  = total ? Math.round((res.aprobadas / total) * 100) : 0;
 
-  doc.setFillColor(8,12,20);    doc.rect(0,0,210,297,'F');
-  doc.setFillColor(20,29,46);   doc.roundedRect(10,10,190,40,4,4,'F');
+  doc.setFillColor(8,12,20);   doc.rect(0,0,210,297,'F');
+  doc.setFillColor(20,29,46);  doc.roundedRect(10,10,190,38,4,4,'F');
   doc.setTextColor(227,232,240); doc.setFontSize(18); doc.setFont('helvetica','bold');
-  doc.text('MALLA CURRICULAR', 20, 25);
-  doc.setFontSize(10); doc.setFont('helvetica','normal'); doc.setTextColor(148,163,184);
-  doc.text('Ingeniería Ambiental', 20, 31);
-  doc.setFontSize(11); doc.setTextColor(227,232,240); doc.setFont('helvetica','bold');
-  doc.text(`${student.first_name} ${student.last_name}`, 20, 41);
-  doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(148,163,184);
-  doc.text(`Cédula: ${student.document_number}  ·  Promedio: ${currentCurriculum.gpa}  ·  ${new Date().toLocaleDateString('es-CO')}`, 20, 47);
+  doc.text('MALLA CURRICULAR', 20, 24);
+  doc.setFontSize(9); doc.setFont('helvetica','normal'); doc.setTextColor(148,163,184);
+  doc.text('Ingeniería Ambiental', 20, 30);
+  doc.setFontSize(11); doc.setFont('helvetica','bold'); doc.setTextColor(227,232,240);
+  doc.text(`${est.nombre} ${est.apellido}`, 20, 39);
+  doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.setTextColor(148,163,184);
+  doc.text(`Cédula: ${est.cedula}  ·  Promedio: ${malla.promedio}  ·  ${new Date().toLocaleDateString('es-CO')}`, 20, 45);
 
-  const boxes = [
-    { label:'Aprobadas',  value: summary.approved,  color:[16,185,129] },
-    { label:'Matriculadas',value: summary.enrolled, color:[59,130,246] },
-    { label:'Disponibles',value: summary.available, color:[245,158,11] },
-    { label:'Progreso',   value:`${pct}%`,           color:[139,92,246] }
+  const cajas = [
+    ['Aprobadas', res.aprobadas, [16,185,129]], ['Matriculadas', res.matriculadas, [59,130,246]],
+    ['Disponibles', res.disponibles, [245,158,11]], [`${pct}%`, 'Progreso', [139,92,246]]
   ];
-  boxes.forEach((box, i) => {
-    const x = 10 + i * 48;
-    doc.setFillColor(...box.color, 30); doc.roundedRect(x,54,44,20,3,3,'F');
-    doc.setDrawColor(...box.color); doc.setLineWidth(0.4); doc.roundedRect(x,54,44,20,3,3,'S');
-    doc.setTextColor(...box.color); doc.setFontSize(16); doc.setFont('helvetica','bold');
-    doc.text(String(box.value), x+22, 63, { align:'center' });
-    doc.setFontSize(7); doc.setFont('helvetica','normal'); doc.setTextColor(148,163,184);
-    doc.text(box.label.toUpperCase(), x+22, 70, { align:'center' });
+  cajas.forEach(([val, lbl, c], i) => {
+    const x = 10 + i*48;
+    doc.setFillColor(...c, 25); doc.roundedRect(x,52,44,18,3,3,'F');
+    doc.setDrawColor(...c); doc.setLineWidth(.3); doc.roundedRect(x,52,44,18,3,3,'S');
+    doc.setTextColor(...c); doc.setFontSize(15); doc.setFont('helvetica','bold');
+    doc.text(String(val), x+22, 60, { align:'center' });
+    doc.setFontSize(6.5); doc.setFont('helvetica','normal'); doc.setTextColor(148,163,184);
+    doc.text(String(lbl).toUpperCase(), x+22, 66, { align:'center' });
   });
 
-  const tableRows = [];
-  [...new Map(courses.map(c => [c.semester, courses.filter(x => x.semester === c.semester)])).entries()]
-    .sort((a,b) => a[0]-b[0])
-    .forEach(([sem, cList]) => {
-      cList.forEach(c => {
-        tableRows.push([`Sem. ${sem}`, c.code, c.name, String(c.credits),
-          c.grade !== null && c.grade !== undefined ? String(c.grade) : '—',
-          { approved:'Aprobada', failed:'Perdida', enrolled:'Matriculada', available:'Disponible', blocked:'Bloqueada', 'semester-locked':'Bloqueado' }[c.status] || c.status
-        ]);
-      });
-    });
+  const rows = [];
+  const sMap = new Map();
+  malla.materias.forEach(m => { if (!sMap.has(m.semestre)) sMap.set(m.semestre, []); sMap.get(m.semestre).push(m); });
+  [...sMap.entries()].sort((a,b)=>a[0]-b[0]).forEach(([s, ms]) =>
+    ms.forEach(m => rows.push([`Sem.${s}`, m.codigo, m.nombre, m.creditos,
+      m.nota !== null && m.nota !== undefined ? m.nota : '—',
+      estadoLabel(m.estado)]))
+  );
 
   doc.autoTable({
-    startY: 80,
-    head: [['Sem.','Código','Materia','Cr.','Nota','Estado']],
-    body: tableRows,
-    styles: { fontSize:8, cellPadding:2.5, textColor:[227,232,240], fillColor:[13,18,32], lineColor:[26,37,64], lineWidth:0.3 },
-    headStyles: { fillColor:[20,29,46], textColor:[148,163,184], fontStyle:'bold', fontSize:7 },
-    alternateRowStyles: { fillColor:[20,29,46] },
-    columnStyles: { 0:{cellWidth:14}, 1:{cellWidth:20,font:'courier',fontSize:7}, 2:{cellWidth:'auto'}, 3:{cellWidth:8,halign:'center'}, 4:{cellWidth:12,halign:'center'}, 5:{cellWidth:22,halign:'center'} },
+    startY:76, head:[['Sem.','Código','Materia','Cr.','Nota','Estado']], body:rows,
+    styles:{ fontSize:7.5, textColor:[227,232,240], fillColor:[13,18,32], lineColor:[26,37,64], lineWidth:.25 },
+    headStyles:{ fillColor:[20,29,46], textColor:[148,163,184], fontStyle:'bold', fontSize:6.5 },
+    alternateRowStyles:{ fillColor:[20,29,46] },
+    columnStyles:{ 0:{cellWidth:12},1:{cellWidth:18,font:'courier',fontSize:7},2:{cellWidth:'auto'},3:{cellWidth:8,halign:'center'},4:{cellWidth:10,halign:'center'},5:{cellWidth:20,halign:'center'} },
     didParseCell: d => {
-      if (d.column.index === 5 && d.section === 'body') {
-        const v = d.cell.raw;
-        if (v==='Aprobada')   d.cell.styles.textColor=[110,231,183];
-        if (v==='Perdida')    d.cell.styles.textColor=[248,113,113];
-        if (v==='Matriculada')d.cell.styles.textColor=[147,197,253];
-        if (v==='Disponible') d.cell.styles.textColor=[252,211,77];
-        if (v==='Bloqueada')  d.cell.styles.textColor=[100,116,139];
+      if (d.column.index===5 && d.section==='body') {
+        const v=d.cell.raw;
+        if(v==='Aprobada')    d.cell.styles.textColor=[110,231,183];
+        if(v==='Reprobada')   d.cell.styles.textColor=[248,113,113];
+        if(v==='Matriculada') d.cell.styles.textColor=[147,197,253];
+        if(v==='Disponible')  d.cell.styles.textColor=[252,211,77];
       }
     },
-    margin: { left:10, right:10 }
+    margin:{left:10,right:10}
   });
 
-  const pageH = doc.internal.pageSize.height;
-  doc.setFontSize(7); doc.setTextColor(71,85,105);
-  doc.text('Malla Curricular · Ingeniería Ambiental', 105, pageH-8, { align:'center' });
+  doc.setFontSize(6); doc.setTextColor(71,85,105);
+  doc.text('Malla Curricular · Ingeniería Ambiental', 105, doc.internal.pageSize.height-7, {align:'center'});
+  doc.save(`malla-${est.cedula}.pdf`);
+  toast('PDF exportado.', 'ok');
+}
 
-  doc.save(`malla-${student.document_number}-${Date.now()}.pdf`);
-  toast('PDF exportado.', 'success');
-});
-
-// ── Init ──────────────────────────────────────────────────────
-checkSession();
+// ── Arrancar ──────────────────────────────────────────
+arrancar();

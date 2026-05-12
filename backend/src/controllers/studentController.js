@@ -1,108 +1,56 @@
 import { pool } from '../config/db.js';
-import { ok, fail } from '../utils/http.js';
-import {
-  getCurriculumForStudent,
-  enrollSemesterCourses,
-  setGrade,
-  removeEnrollment
-} from '../services/curriculumService.js';
+import { getMallaEstudiante, matricularSemestre, guardarNota, quitarMateria } from '../services/curriculumService.js';
 
-export async function listStudents(req, res) {
-  try {
-    const [rows] = await pool.query(
-      `SELECT id, first_name, last_name, document_number, role, created_at
-       FROM students ORDER BY last_name, first_name`
-    );
-    return ok(res, { students: rows });
-  } catch (error) {
-    return fail(res, 'Error al listar estudiantes.', 500, { error: error.message });
-  }
+async function getEst(id, res) {
+  const [r] = await pool.query('SELECT id, nombre, apellido, cedula FROM students WHERE id = ?', [id]);
+  if (!r.length) { res.status(404).json({ ok: false, msg: 'Estudiante no encontrado.' }); return null; }
+  return r[0];
 }
 
-export async function getStudentCurriculum(req, res) {
+export async function malla(req, res) {
   try {
-    const studentId = Number(req.params.id);
-
-    const [studentRows] = await pool.query(
-      `SELECT id, first_name, last_name, document_number FROM students WHERE id = ?`,
-      [studentId]
-    );
-    if (!studentRows.length) return fail(res, 'Estudiante no encontrado.', 404);
-
-    const data = await getCurriculumForStudent(studentId);
-    return ok(res, { student: studentRows[0], ...data });
-  } catch (error) {
-    return fail(res, 'Error al consultar la malla.', 500, { error: error.message });
-  }
+    const est = await getEst(Number(req.params.id), res);
+    if (!est) return;
+    const data = await getMallaEstudiante(est.id);
+    res.json({ ok: true, estudiante: est, ...data });
+  } catch (e) { res.status(500).json({ ok: false, msg: e.message }); }
 }
 
-export async function enrollSemester(req, res) {
+export async function matricular(req, res) {
   try {
-    const studentId   = Number(req.params.id);
-    const { semester, course_codes } = req.body;
-
-    if (!semester || !Array.isArray(course_codes)) {
-      return fail(res, 'semester y course_codes[] son obligatorios.');
-    }
-
-    const result = await enrollSemesterCourses(studentId, Number(semester), course_codes);
-    if (!result.valid) return fail(res, result.message, result.status);
-
-    const updated = await getCurriculumForStudent(studentId);
-    const [studentRows] = await pool.query(
-      `SELECT id, first_name, last_name, document_number FROM students WHERE id = ?`,
-      [studentId]
-    );
-    return ok(res, { message: result.message, student: studentRows[0], ...updated });
-  } catch (error) {
-    return fail(res, 'Error al matricular semestre.', 500, { error: error.message });
-  }
+    const est = await getEst(Number(req.params.id), res);
+    if (!est) return;
+    const { semestre, codigos } = req.body;
+    if (!semestre || !Array.isArray(codigos) || !codigos.length)
+      return res.status(400).json({ ok: false, msg: 'semestre y codigos[] son obligatorios.' });
+    const r = await matricularSemestre(est.id, Number(semestre), codigos);
+    if (!r.ok) return res.status(r.status).json({ ok: false, msg: r.msg });
+    const data = await getMallaEstudiante(est.id);
+    res.json({ ok: true, msg: r.msg, estudiante: est, ...data });
+  } catch (e) { res.status(500).json({ ok: false, msg: e.message }); }
 }
 
-export async function updateGrade(req, res) {
+export async function putNota(req, res) {
   try {
-    const studentId  = Number(req.params.id);
-    const courseCode = req.params.code;
-    const { grade }  = req.body;
-
-    const numericGrade = parseFloat(grade);
-    if (isNaN(numericGrade) || numericGrade < 1.0 || numericGrade > 5.0) {
-      return fail(res, 'La nota debe ser entre 1.0 y 5.0', 400);
-    }
-
-    const result = await setGrade(studentId, courseCode, numericGrade);
-    if (!result.valid) return fail(res, result.message, result.status);
-
-    const updated = await getCurriculumForStudent(studentId);
-    const [studentRows] = await pool.query(
-      `SELECT id, first_name, last_name, document_number FROM students WHERE id = ?`,
-      [studentId]
-    );
-    return ok(res, { message: result.message, student: studentRows[0], ...updated });
-  } catch (error) {
-    return fail(res, 'Error al actualizar nota.', 500, { error: error.message });
-  }
+    const est = await getEst(Number(req.params.id), res);
+    if (!est) return;
+    const nota = parseFloat(req.body.nota);
+    if (isNaN(nota) || nota < 1.0 || nota > 5.0)
+      return res.status(400).json({ ok: false, msg: 'La nota debe ser entre 1.0 y 5.0' });
+    const r = await guardarNota(est.id, req.params.codigo, nota);
+    if (!r.ok) return res.status(r.status).json({ ok: false, msg: r.msg });
+    const data = await getMallaEstudiante(est.id);
+    res.json({ ok: true, msg: r.msg, estudiante: est, ...data });
+  } catch (e) { res.status(500).json({ ok: false, msg: e.message }); }
 }
 
-export async function deleteCourse(req, res) {
+export async function deleteMateria(req, res) {
   try {
-    const studentId  = Number(req.params.id);
-    const courseCode = req.params.code;
-
-    const result = await removeEnrollment(studentId, courseCode);
-    if (!result.valid) {
-      return fail(res, result.message, result.status, {
-        dependentCourses: result.dependentCourses || []
-      });
-    }
-
-    const updated = await getCurriculumForStudent(studentId);
-    const [studentRows] = await pool.query(
-      `SELECT id, first_name, last_name, document_number FROM students WHERE id = ?`,
-      [studentId]
-    );
-    return ok(res, { message: result.message, student: studentRows[0], ...updated });
-  } catch (error) {
-    return fail(res, 'Error al eliminar materia.', 500, { error: error.message });
-  }
+    const est = await getEst(Number(req.params.id), res);
+    if (!est) return;
+    const r = await quitarMateria(est.id, req.params.codigo);
+    if (!r.ok) return res.status(r.status).json({ ok: false, msg: r.msg, deps: r.deps });
+    const data = await getMallaEstudiante(est.id);
+    res.json({ ok: true, msg: r.msg, estudiante: est, ...data });
+  } catch (e) { res.status(500).json({ ok: false, msg: e.message }); }
 }

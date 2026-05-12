@@ -9,41 +9,40 @@ DROP TABLE IF EXISTS students;
 SET FOREIGN_KEY_CHECKS = 1;
 
 CREATE TABLE students (
-  id            INT AUTO_INCREMENT PRIMARY KEY,
-  first_name    VARCHAR(80)  NOT NULL,
-  last_name     VARCHAR(80)  NOT NULL,
-  document_number VARCHAR(30) NOT NULL UNIQUE,
-  password_hash VARCHAR(255) NOT NULL,
-  role          ENUM('student','professor','admin') DEFAULT 'student',
-  created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  id              INT AUTO_INCREMENT PRIMARY KEY,
+  nombre          VARCHAR(80)  NOT NULL,
+  apellido        VARCHAR(80)  NOT NULL,
+  cedula          VARCHAR(30)  NOT NULL UNIQUE,
+  password_hash   VARCHAR(255) NOT NULL,
+  created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE courses (
-  code     VARCHAR(10)  PRIMARY KEY,
-  name     VARCHAR(160) NOT NULL,
-  semester INT          NOT NULL,
-  credits  INT          NOT NULL,
+  codigo   VARCHAR(10)  PRIMARY KEY,
+  nombre   VARCHAR(160) NOT NULL,
+  semestre INT          NOT NULL,
+  creditos INT          NOT NULL,
   area     VARCHAR(120) NOT NULL
 );
 
 CREATE TABLE prerequisites (
-  id                INT AUTO_INCREMENT PRIMARY KEY,
-  course_code       VARCHAR(10) NOT NULL,
-  prerequisite_code VARCHAR(10) NOT NULL,
-  CONSTRAINT fk_prereq_course    FOREIGN KEY (course_code)       REFERENCES courses(code) ON DELETE CASCADE,
-  CONSTRAINT fk_prereq_required  FOREIGN KEY (prerequisite_code) REFERENCES courses(code) ON DELETE CASCADE,
-  CONSTRAINT uq_prereq           UNIQUE (course_code, prerequisite_code)
+  id              INT AUTO_INCREMENT PRIMARY KEY,
+  codigo_materia  VARCHAR(10) NOT NULL,
+  codigo_prereq   VARCHAR(10) NOT NULL,
+  FOREIGN KEY (codigo_materia) REFERENCES courses(codigo) ON DELETE CASCADE,
+  FOREIGN KEY (codigo_prereq)  REFERENCES courses(codigo) ON DELETE CASCADE,
+  UNIQUE KEY uq_prereq (codigo_materia, codigo_prereq)
 );
 
--- grade NULL means enrolled but not graded yet
+-- grade NULL = matriculada sin nota aún
 CREATE TABLE student_courses (
   id          INT AUTO_INCREMENT PRIMARY KEY,
   student_id  INT         NOT NULL,
-  course_code VARCHAR(10) NOT NULL,
-  grade       DECIMAL(3,1) DEFAULT NULL,
-  enrolled_at TIMESTAMP   DEFAULT CURRENT_TIMESTAMP,
-  updated_at  TIMESTAMP   DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  CONSTRAINT fk_sc_student FOREIGN KEY (student_id)  REFERENCES students(id)     ON DELETE CASCADE,
-  CONSTRAINT fk_sc_course  FOREIGN KEY (course_code) REFERENCES courses(code)    ON DELETE CASCADE,
-  CONSTRAINT uq_sc         UNIQUE (student_id, course_code)
+  codigo      VARCHAR(10) NOT NULL,
+  nota        DECIMAL(3,1) DEFAULT NULL,
+  creado_en   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  actualizado TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE,
+  FOREIGN KEY (codigo)     REFERENCES courses(codigo) ON DELETE CASCADE,
+  UNIQUE KEY uq_student_course (student_id, codigo)
 );

@@ -1,108 +1,91 @@
 import bcrypt from 'bcryptjs';
+import jwt    from 'jsonwebtoken';
 import { pool } from '../config/db.js';
-import { ok, fail } from '../utils/http.js';
-import { signToken } from '../middleware/auth.js';
 
-const SEMESTER1_CODES = ['453007', '453058', '453001', '453004', '453005', '453003', '453002'];
+const SECRET = process.env.JWT_SECRET || 'malla_jwt_secret_2024';
+const token  = p => jwt.sign(p, SECRET, { expiresIn: '7d' });
 
-export async function register(req, res) {
+export async function registrar(req, res) {
+  const { nombre, apellido, cedula, password } = req.body;
+  if (!nombre || !apellido || !cedula || !password)
+    return res.status(400).json({ ok: false, msg: 'Todos los campos son obligatorios.' });
+  if (password.length < 6)
+    return res.status(400).json({ ok: false, msg: 'La contraseña debe tener mínimo 6 caracteres.' });
+
   try {
-    const { first_name, last_name, document_number, password } = req.body;
-
-    if (!first_name || !last_name || !document_number || !password) {
-      return fail(res, 'Todos los campos son obligatorios.');
-    }
-    if (password.length < 6) {
-      return fail(res, 'La contraseña debe tener al menos 6 caracteres.');
-    }
-
-    const password_hash = await bcrypt.hash(password, 10);
-
+    const hash = await bcrypt.hash(password, 10);
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();
 
-      const [result] = await conn.query(
-        `INSERT INTO students (first_name, last_name, document_number, password_hash)
-         VALUES (?, ?, ?, ?)`,
-        [first_name.trim(), last_name.trim(), document_number.trim(), password_hash]
+      const [r] = await conn.query(
+        'INSERT INTO students (nombre, apellido, cedula, password_hash) VALUES (?,?,?,?)',
+        [nombre.trim(), apellido.trim(), cedula.trim(), hash]
       );
+      const sid = r.insertId;
 
-      const studentId = result.insertId;
-
-      // Auto-enroll semester 1 courses
-      const insertValues = SEMESTER1_CODES.map(code => [studentId, code]);
-      await conn.query(
-        `INSERT INTO student_courses (student_id, course_code) VALUES ?`,
-        [insertValues]
-      );
+      // Auto-matricular semestre 1
+      const SEM1 = ['453007','453058','453001','453004','453005','453003','453002'];
+      for (const c of SEM1) {
+        await conn.query('INSERT INTO student_courses (student_id, codigo) VALUES (?,?)', [sid, c]);
+      }
 
       await conn.commit();
-
-      const [rows] = await conn.query(
-        `SELECT id, first_name, last_name, document_number FROM students WHERE id = ?`,
-        [studentId]
-      );
-      const student = rows[0];
-      const token = signToken({ id: studentId, document_number: student.document_number });
-
-      return ok(res, { student, token, message: 'Registro exitoso. Semestre 1 matriculado automáticamente.' }, 201);
-    } catch (err) {
-      await conn.rollback();
-      throw err;
+      const estudiante = { id: sid, nombre, apellido, cedula };
+      return res.status(201).json({ ok: true, estudiante, token: token({ id: sid, cedula }), msg: 'Registro exitoso. Semestre 1 matriculado automáticamente.' });
+    } catch (e) {
+      await conn.rollback(); throw e;
     } finally {
       conn.release();
     }
-  } catch (error) {
-    if (error.code === 'ER_DUP_ENTRY') {
-      return fail(res, 'Ya existe un estudiante con esa cédula.', 409);
-    }
-    return fail(res, 'Error al registrar estudiante.', 500, { error: error.message });
+  } catch (e) {
+    if (e.code === 'ER_DUP_ENTRY')
+      return res.status(409).json({ ok: false, msg: 'Ya existe un estudiante con esa cédula.' });
+    return res.status(500).json({ ok: false, msg: 'Error al registrar.', error: e.message });
   }
 }
 
 export async function login(req, res) {
+  const { cedula, password } = req.body;
+  if (!cedula || !password)
+    return res.status(400).json({ ok: false, msg: 'Cédula y contraseña son obligatorias.' });
+
   try {
-    const { document_number, password } = req.body;
-
-    if (!document_number || !password) {
-      return fail(res, 'Cédula y contraseña son obligatorios.');
-    }
-
     const [rows] = await pool.query(
-      `SELECT id, first_name, last_name, document_number, password_hash
-       FROM students WHERE document_number = ?`,
-      [document_number.trim()]
+      'SELECT id, nombre, apellido, cedula, password_hash FROM students WHERE cedula = ?',
+      [cedula.trim()]
     );
+    if (!rows.length)
+      return res.status(401).json({ ok: false, msg: 'Cédula o contraseña incorrectos.' });
 
-    if (!rows.length) {
-      return fail(res, 'Cédula o contraseña incorrectos.', 401);
-    }
+    const s = rows[0];
+    const valido = await bcrypt.compare(password, s.password_hash);
+    if (!valido)
+      return res.status(401).json({ ok: false, msg: 'Cédula o contraseña incorrectos.' });
 
-    const student = rows[0];
-    const valid = await bcrypt.compare(password, student.password_hash);
-    if (!valid) {
-      return fail(res, 'Cédula o contraseña incorrectos.', 401);
-    }
-
-    const token = signToken({ id: student.id, document_number: student.document_number });
-    const { password_hash, ...studentData } = student;
-
-    return ok(res, { student: studentData, token, message: 'Inicio de sesión exitoso.' });
-  } catch (error) {
-    return fail(res, 'Error al iniciar sesión.', 500, { error: error.message });
+    const { password_hash, ...est } = s;
+    return res.json({ ok: true, estudiante: est, token: token({ id: s.id, cedula: s.cedula }) });
+  } catch (e) {
+    return res.status(500).json({ ok: false, msg: 'Error al iniciar sesión.', error: e.message });
   }
 }
 
-export async function me(req, res) {
+export function verificarToken(req, res, next) {
+  const auth = req.headers.authorization || '';
+  const tk   = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+  if (!tk) return res.status(401).json({ ok: false, msg: 'Token requerido.' });
   try {
-    const [rows] = await pool.query(
-      `SELECT id, first_name, last_name, document_number, role FROM students WHERE id = ?`,
-      [req.user.id]
-    );
-    if (!rows.length) return fail(res, 'Estudiante no encontrado.', 404);
-    return ok(res, { student: rows[0] });
-  } catch (error) {
-    return fail(res, 'Error al obtener perfil.', 500, { error: error.message });
+    req.user = jwt.verify(tk, SECRET);
+    next();
+  } catch {
+    return res.status(401).json({ ok: false, msg: 'Token inválido o expirado.' });
   }
+}
+
+export async function perfil(req, res) {
+  const [rows] = await pool.query(
+    'SELECT id, nombre, apellido, cedula FROM students WHERE id = ?', [req.user.id]
+  );
+  if (!rows.length) return res.status(404).json({ ok: false, msg: 'Estudiante no encontrado.' });
+  return res.json({ ok: true, estudiante: rows[0] });
 }

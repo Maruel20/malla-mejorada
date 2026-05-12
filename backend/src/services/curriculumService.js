@@ -1,342 +1,225 @@
 import { pool } from '../config/db.js';
 
-const MIN_CREDITS_TO_ADVANCE = 12;
-const MIN_ENROLL_CREDITS     = 12;
-const MAX_ENROLL_CREDITS     = 20;
+const MIN_CR = 12;
+const MAX_CR = 20;
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ─── helpers ────────────────────────────────────────────────────────────────
 
-async function getStudentEnrollments(studentId, connection = pool) {
-  const [rows] = await connection.query(
-    `SELECT course_code, grade FROM student_courses WHERE student_id = ?`,
-    [studentId]
+async function getNotas(studentId, conn = pool) {
+  const [rows] = await conn.query(
+    'SELECT codigo, nota FROM student_courses WHERE student_id = ?', [studentId]
   );
-  // Map: code → { grade: number|null }
-  const map = new Map();
-  rows.forEach(r => map.set(r.course_code, { grade: r.grade === null ? null : Number(r.grade) }));
-  return map;
+  // Map codigo → nota (number | null)
+  const m = new Map();
+  rows.forEach(r => m.set(r.codigo, r.nota === null ? null : Number(r.nota)));
+  return m;
 }
 
-async function getPrerequisitesMap(connection = pool) {
-  const [rows] = await connection.query(`SELECT course_code, prerequisite_code FROM prerequisites`);
-  const map = new Map();
-  for (const row of rows) {
-    if (!map.has(row.course_code)) map.set(row.course_code, []);
-    map.get(row.course_code).push(row.prerequisite_code);
+async function getPrereqs(conn = pool) {
+  const [rows] = await conn.query('SELECT codigo_materia, codigo_prereq FROM prerequisites');
+  const m = new Map();
+  rows.forEach(r => {
+    if (!m.has(r.codigo_materia)) m.set(r.codigo_materia, []);
+    m.get(r.codigo_materia).push(r.codigo_prereq);
+  });
+  return m;
+}
+
+async function getMaterias(conn = pool) {
+  const [rows] = await conn.query(`
+    SELECT c.codigo, c.nombre, c.semestre, c.creditos, c.area,
+           GROUP_CONCAT(p.codigo_prereq ORDER BY p.codigo_prereq SEPARATOR ',') AS prereqs
+    FROM courses c
+    LEFT JOIN prerequisites p ON p.codigo_materia = c.codigo
+    GROUP BY c.codigo, c.nombre, c.semestre, c.creditos, c.area
+    ORDER BY c.semestre, c.codigo
+  `);
+  return rows.map(r => ({ ...r, prereqs: r.prereqs ? r.prereqs.split(',') : [] }));
+}
+
+// Semestres desbloqueados: sem 1 siempre; sem N si sem N-1 tiene ≥12 cr aprobados
+function semestresDesbloqueados(materias, notas) {
+  const aprobCr = new Map();
+  materias.forEach(m => {
+    const n = notas.get(m.codigo);
+    if (n !== null && n !== undefined && n >= 3.0)
+      aprobCr.set(m.semestre, (aprobCr.get(m.semestre) || 0) + m.creditos);
+  });
+  const ok = new Set([1]);
+  for (let s = 2; s <= 10; s++) {
+    if ((aprobCr.get(s - 1) || 0) >= MIN_CR) ok.add(s);
+    else break;
   }
-  return map;
+  return ok;
 }
 
-async function getAllCourses(connection = pool) {
-  const [rows] = await connection.query(
-    `SELECT c.code, c.name, c.semester, c.credits, c.area,
-            GROUP_CONCAT(p.prerequisite_code ORDER BY p.prerequisite_code SEPARATOR ',') AS prerequisites
-     FROM courses c
-     LEFT JOIN prerequisites p ON p.course_code = c.code
-     GROUP BY c.code, c.name, c.semester, c.credits, c.area
-     ORDER BY c.semester, c.code`
-  );
-  return rows.map(r => ({
-    ...r,
-    prerequisites: r.prerequisites ? r.prerequisites.split(',') : []
-  }));
+function calcStatus(materia, notas, semDesbloq) {
+  const nota = notas.get(materia.codigo);
+  const matriculada = notas.has(materia.codigo);
+
+  if (!semDesbloq.has(materia.semestre)) return { estado: 'bloqueado_sem', nota: undefined, faltanPrereqs: [] };
+
+  if (matriculada) {
+    if (nota === null) return { estado: 'matriculada', nota: null, faltanPrereqs: [] };
+    return { estado: nota >= 3.0 ? 'aprobada' : 'reprobada', nota, faltanPrereqs: [] };
+  }
+
+  const faltan = materia.prereqs.filter(c => {
+    const pn = notas.get(c);
+    return pn === undefined || pn === null || pn < 3.0;
+  });
+  return { estado: faltan.length === 0 ? 'disponible' : 'bloqueada', nota: undefined, faltanPrereqs: faltan };
 }
 
-// ── Semester unlock logic ─────────────────────────────────────────────────────
+// ─── exports ─────────────────────────────────────────────────────────────────
 
-function computeUnlockedSemesters(courses, enrollments) {
-  // Group approved credits by curriculum semester
-  const approvedBySem = new Map();
-  courses.forEach(c => {
-    const entry = enrollments.get(c.code);
-    const isApproved = entry && entry.grade !== null && entry.grade >= 3.0;
-    if (isApproved) {
-      approvedBySem.set(c.semester, (approvedBySem.get(c.semester) || 0) + c.credits);
-    }
+export async function getMallaEstudiante(studentId) {
+  const [notas, materias] = await Promise.all([getNotas(studentId), getMaterias()]);
+  const semDesbloq = semestresDesbloqueados(materias, notas);
+
+  const items = materias.map(m => {
+    const { estado, nota, faltanPrereqs } = calcStatus(m, notas, semDesbloq);
+    return { ...m, estado, nota, faltanPrereqs };
   });
 
-  const unlocked = new Set([1]);
-  for (let sem = 2; sem <= 10; sem++) {
-    const prevApproved = approvedBySem.get(sem - 1) || 0;
-    if (prevApproved >= MIN_CREDITS_TO_ADVANCE) {
-      unlocked.add(sem);
-    } else {
-      break; // don't unlock semesters beyond first gap
-    }
-  }
-  return unlocked;
-}
-
-function computeCourseStatus(course, enrollments, unlockedSemesters) {
-  const entry = enrollments.get(course.code);
-  const isEnrolled = entry !== undefined;
-  const grade = entry ? entry.grade : undefined;
-
-  if (!unlockedSemesters.has(course.semester)) {
-    return { status: 'semester-locked', grade: undefined, missingPrerequisites: [] };
-  }
-
-  if (isEnrolled) {
-    if (grade === null || grade === undefined) {
-      return { status: 'enrolled', grade: null, missingPrerequisites: [] };
-    }
-    return {
-      status: grade >= 3.0 ? 'approved' : 'failed',
-      grade,
-      missingPrerequisites: []
-    };
-  }
-
-  // Not enrolled — check prerequisites
-  const missing = course.prerequisites.filter(code => {
-    const prereqEntry = enrollments.get(code);
-    return !prereqEntry || prereqEntry.grade === null || prereqEntry.grade < 3.0;
+  // Estadísticas por semestre
+  const statsSem = {};
+  materias.forEach(m => {
+    if (!statsSem[m.semestre]) statsSem[m.semestre] = { total: 0, aprobados: 0 };
+    statsSem[m.semestre].total += m.creditos;
+    const n = notas.get(m.codigo);
+    if (n !== null && n !== undefined && n >= 3.0) statsSem[m.semestre].aprobados += m.creditos;
   });
+
+  const resumen = {
+    aprobadas:   items.filter(x => x.estado === 'aprobada').length,
+    reprobadas:  items.filter(x => x.estado === 'reprobada').length,
+    matriculadas:items.filter(x => x.estado === 'matriculada').length,
+    disponibles: items.filter(x => x.estado === 'disponible').length,
+    bloqueadas:  items.filter(x => x.estado === 'bloqueada').length,
+  };
+
+  // Promedio ponderado
+  let sumNotas = 0, sumCr = 0;
+  items.forEach(m => {
+    if (m.nota !== null && m.nota !== undefined) { sumNotas += m.nota * m.creditos; sumCr += m.creditos; }
+  });
+  const promedio = sumCr > 0 ? parseFloat((sumNotas / sumCr).toFixed(2)) : 0;
 
   return {
-    status: missing.length === 0 ? 'available' : 'blocked',
-    grade: undefined,
-    missingPrerequisites: missing
+    materias: items,
+    resumen,
+    semestresDesbloqueados: [...semDesbloq].sort((a, b) => a - b),
+    statsSem,
+    promedio,
   };
 }
 
-// ── Exported service functions ────────────────────────────────────────────────
-
-export async function getCurriculumForStudent(studentId) {
-  const [enrollments, courses] = await Promise.all([
-    getStudentEnrollments(studentId),
-    getAllCourses()
-  ]);
-
-  const unlockedSemesters = computeUnlockedSemesters(courses, enrollments);
-
-  const evaluated = courses.map(course => {
-    const { status, grade, missingPrerequisites } = computeCourseStatus(course, enrollments, unlockedSemesters);
-    return { ...course, status, grade, missingPrerequisites };
-  });
-
-  // Per-semester stats
-  const semesterStats = {};
-  courses.forEach(c => {
-    if (!semesterStats[c.semester]) {
-      semesterStats[c.semester] = { total: 0, approvedCredits: 0, enrolledCount: 0 };
-    }
-    semesterStats[c.semester].total += c.credits;
-    const entry = enrollments.get(c.code);
-    if (entry) semesterStats[c.semester].enrolledCount++;
-    if (entry && entry.grade !== null && entry.grade >= 3.0) {
-      semesterStats[c.semester].approvedCredits += c.credits;
-    }
-  });
-
-  const summary = {
-    approved:       evaluated.filter(c => c.status === 'approved').length,
-    failed:         evaluated.filter(c => c.status === 'failed').length,
-    enrolled:       evaluated.filter(c => c.status === 'enrolled').length,
-    available:      evaluated.filter(c => c.status === 'available').length,
-    blocked:        evaluated.filter(c => c.status === 'blocked').length,
-    semesterLocked: evaluated.filter(c => c.status === 'semester-locked').length
-  };
-
-  // Weighted GPA
-  let weightedSum = 0, creditsTried = 0;
-  evaluated.forEach(c => {
-    if (c.grade !== null && c.grade !== undefined) {
-      weightedSum  += c.grade * c.credits;
-      creditsTried += c.credits;
-    }
-  });
-  const gpa = creditsTried > 0 ? (weightedSum / creditsTried) : 0;
-
-  return {
-    courses: evaluated,
-    summary,
-    unlockedSemesters: [...unlockedSemesters].sort((a, b) => a - b),
-    semesterStats,
-    gpa: parseFloat(gpa.toFixed(2))
-  };
-}
-
-export async function enrollSemesterCourses(studentId, semester, courseCodes) {
-  if (!Array.isArray(courseCodes) || courseCodes.length === 0) {
-    return { valid: false, status: 400, message: 'Debes seleccionar al menos una materia.' };
-  }
-
+export async function matricularSemestre(studentId, semestre, codigos) {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
 
-    // Verify semester is unlocked
-    const enrollments = await getStudentEnrollments(studentId, conn);
-    const courses     = await getAllCourses(conn);
-    const unlocked    = computeUnlockedSemesters(courses, enrollments);
+    const [notas, materias] = await Promise.all([getNotas(studentId, conn), getMaterias(conn)]);
+    const semDesbloq = semestresDesbloqueados(materias, notas);
 
-    if (!unlocked.has(semester)) {
-      await conn.rollback();
-      return { valid: false, status: 403, message: `El semestre ${semester} aún no está desbloqueado.` };
+    if (!semDesbloq.has(semestre))
+      return { ok: false, status: 403, msg: `El semestre ${semestre} aún no está desbloqueado.` };
+
+    const matSem = materias.filter(m => m.semestre === semestre && codigos.includes(m.codigo));
+    if (matSem.length !== codigos.length)
+      return { ok: false, status: 400, msg: 'Algunos códigos no pertenecen a este semestre.' };
+
+    const totalCr = matSem.reduce((s, m) => s + m.creditos, 0);
+    if (totalCr < MIN_CR) return { ok: false, status: 400, msg: `Mínimo ${MIN_CR} créditos. Seleccionaste ${totalCr}.` };
+    if (totalCr > MAX_CR) return { ok: false, status: 400, msg: `Máximo ${MAX_CR} créditos. Seleccionaste ${totalCr}.` };
+
+    const prereqs = await getPrereqs(conn);
+    for (const m of matSem) {
+      const ps = prereqs.get(m.codigo) || [];
+      const faltan = ps.filter(c => { const n = notas.get(c); return n === undefined || n === null || n < 3.0; });
+      if (faltan.length) return { ok: false, status: 400, msg: `${m.nombre}: faltan prerrequisitos (${faltan.join(', ')})` };
     }
 
-    // Get the requested courses and validate they belong to this semester
-    const semCourses = courses.filter(c => c.semester === semester && courseCodes.includes(c.code));
-    if (semCourses.length !== courseCodes.length) {
-      await conn.rollback();
-      return { valid: false, status: 400, message: 'Algunos códigos no pertenecen a este semestre.' };
+    for (const m of matSem) {
+      await conn.query(
+        'INSERT IGNORE INTO student_courses (student_id, codigo) VALUES (?, ?)',
+        [studentId, m.codigo]
+      );
     }
-
-    // Credit validation
-    const totalCredits = semCourses.reduce((s, c) => s + c.credits, 0);
-    if (totalCredits < MIN_ENROLL_CREDITS) {
-      await conn.rollback();
-      return { valid: false, status: 400, message: `Debes matricular mínimo ${MIN_ENROLL_CREDITS} créditos. Seleccionaste ${totalCredits}.` };
-    }
-    if (totalCredits > MAX_ENROLL_CREDITS) {
-      await conn.rollback();
-      return { valid: false, status: 400, message: `No puedes matricular más de ${MAX_ENROLL_CREDITS} créditos. Seleccionaste ${totalCredits}.` };
-    }
-
-    // Check prerequisites for each course
-    const prereqMap = await getPrerequisitesMap(conn);
-    for (const c of semCourses) {
-      const prereqs = prereqMap.get(c.code) || [];
-      const missing = prereqs.filter(code => {
-        const e = enrollments.get(code);
-        return !e || e.grade === null || e.grade < 3.0;
-      });
-      if (missing.length > 0) {
-        await conn.rollback();
-        return {
-          valid: false,
-          status: 400,
-          message: `La materia ${c.name} tiene prerrequisitos pendientes: ${missing.join(', ')}`
-        };
-      }
-    }
-
-    // Insert enrollments (ignore already enrolled)
-    const values = semCourses.map(c => [studentId, c.code]);
-    await conn.query(
-      `INSERT IGNORE INTO student_courses (student_id, course_code) VALUES ?`,
-      [values]
-    );
 
     await conn.commit();
-    return { valid: true, message: `Semestre ${semester} matriculado con ${totalCredits} créditos.`, totalCredits };
-  } catch (err) {
-    await conn.rollback();
-    throw err;
+    return { ok: true, msg: `Semestre ${semestre} matriculado con ${totalCr} créditos.` };
+  } catch (e) {
+    await conn.rollback(); throw e;
   } finally {
     conn.release();
   }
 }
 
-export async function setGrade(studentId, courseCode, grade) {
+export async function guardarNota(studentId, codigo, nota) {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
 
-    // Course must exist
-    const [courseRows] = await conn.query(`SELECT code, name FROM courses WHERE code = ?`, [courseCode]);
-    if (!courseRows.length) {
-      await conn.rollback();
-      return { valid: false, status: 404, message: 'Materia no encontrada.' };
-    }
+    const [cr] = await conn.query('SELECT codigo, semestre FROM courses WHERE codigo = ?', [codigo]);
+    if (!cr.length) return { ok: false, status: 404, msg: 'Materia no encontrada.' };
 
-    // Must be enrolled
-    const [enrolled] = await conn.query(
-      `SELECT id FROM student_courses WHERE student_id = ? AND course_code = ?`,
-      [studentId, courseCode]
-    );
-    if (!enrolled.length) {
-      await conn.rollback();
-      return { valid: false, status: 404, message: 'El estudiante no está matriculado en esta materia.' };
-    }
+    const notas = await getNotas(studentId, conn);
+    const materias = await getMaterias(conn);
+    const semDesbloq = semestresDesbloqueados(materias, notas);
 
+    if (!semDesbloq.has(cr[0].semestre))
+      return { ok: false, status: 403, msg: `Semestre ${cr[0].semestre} no desbloqueado.` };
+
+    // Verificar prerrequisitos
+    const prereqs = await getPrereqs(conn);
+    const ps = prereqs.get(codigo) || [];
+    const faltan = ps.filter(c => { const n = notas.get(c); return n === undefined || n === null || n < 3.0; });
+    if (faltan.length) return { ok: false, status: 400, msg: `Faltan prerrequisitos: ${faltan.join(', ')}` };
+
+    // Auto-matricular si no existe + poner nota
     await conn.query(
-      `UPDATE student_courses SET grade = ?, updated_at = CURRENT_TIMESTAMP
-       WHERE student_id = ? AND course_code = ?`,
-      [grade, studentId, courseCode]
+      `INSERT INTO student_courses (student_id, codigo, nota) VALUES (?,?,?)
+       ON DUPLICATE KEY UPDATE nota = VALUES(nota), actualizado = CURRENT_TIMESTAMP`,
+      [studentId, codigo, nota]
     );
 
     await conn.commit();
-    return { valid: true, message: grade >= 3.0 ? 'Materia aprobada.' : 'Materia reprobada registrada.' };
-  } catch (err) {
-    await conn.rollback();
-    throw err;
+    return { ok: true, msg: nota >= 3.0 ? 'Materia aprobada.' : 'Materia reprobada registrada.' };
+  } catch (e) {
+    await conn.rollback(); throw e;
   } finally {
     conn.release();
   }
 }
 
-export async function removeEnrollment(studentId, courseCode) {
+export async function quitarMateria(studentId, codigo) {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
 
-    const enrollments = await getStudentEnrollments(studentId, conn);
-    if (!enrollments.has(courseCode)) {
-      await conn.rollback();
-      return { valid: false, status: 404, message: 'Materia no registrada para este estudiante.' };
-    }
+    const notas = await getNotas(studentId, conn);
+    if (!notas.has(codigo)) return { ok: false, status: 404, msg: 'Materia no registrada.' };
 
-    // Check if approved courses depend on this one
-    const [dependentRows] = await conn.query(
-      `SELECT c.code, c.name
+    // No quitar si hay materias aprobadas que dependen de esta
+    const [deps] = await conn.query(
+      `SELECT c.codigo, c.nombre
        FROM prerequisites p
-       INNER JOIN student_courses sc ON sc.course_code = p.course_code AND sc.student_id = ?
-       INNER JOIN courses c ON c.code = p.course_code
-       WHERE p.prerequisite_code = ? AND sc.grade >= 3.0`,
-      [studentId, courseCode]
+       JOIN student_courses sc ON sc.codigo = p.codigo_materia AND sc.student_id = ?
+       JOIN courses c ON c.codigo = p.codigo_materia
+       WHERE p.codigo_prereq = ? AND sc.nota >= 3.0`,
+      [studentId, codigo]
     );
+    if (deps.length)
+      return { ok: false, status: 400, msg: 'No se puede quitar: hay materias aprobadas que dependen de esta.', deps };
 
-    if (dependentRows.length > 0) {
-      await conn.rollback();
-      return {
-        valid: false,
-        status: 400,
-        message: 'No se puede quitar: hay materias aprobadas que dependen de esta.',
-        dependentCourses: dependentRows
-      };
-    }
-
-    await conn.query(
-      `DELETE FROM student_courses WHERE student_id = ? AND course_code = ?`,
-      [studentId, courseCode]
-    );
-
+    await conn.query('DELETE FROM student_courses WHERE student_id = ? AND codigo = ?', [studentId, codigo]);
     await conn.commit();
-    return { valid: true, message: 'Materia removida del historial.' };
-  } catch (err) {
-    await conn.rollback();
-    throw err;
+    return { ok: true, msg: 'Materia removida.' };
+  } catch (e) {
+    await conn.rollback(); throw e;
   } finally {
     conn.release();
   }
-}
-
-// Legacy helper kept for compatibility
-export async function validateCanApproveCourse(studentId, courseCode, connection = pool) {
-  const [courseRows] = await connection.query(`SELECT code, name FROM courses WHERE code = ?`, [courseCode]);
-  if (!courseRows.length) return { valid: false, status: 404, message: 'La materia no existe.' };
-
-  const enrollments = await getStudentEnrollments(studentId, connection);
-  const entry = enrollments.get(courseCode);
-  if (entry && entry.grade !== null && entry.grade >= 3.0) {
-    return { valid: false, status: 409, message: 'La materia ya está aprobada.' };
-  }
-
-  const prereqMap = await getPrerequisitesMap(connection);
-  const prereqs   = prereqMap.get(courseCode) || [];
-  const missing   = prereqs.filter(code => {
-    const e = enrollments.get(code);
-    return !e || e.grade === null || e.grade < 3.0;
-  });
-
-  if (missing.length > 0) {
-    const [missingRows] = await connection.query(
-      `SELECT code, name FROM courses WHERE code IN (${missing.map(() => '?').join(',')}) ORDER BY semester, code`,
-      missing
-    );
-    return { valid: false, status: 400, message: 'Faltan prerrequisitos.', missingPrerequisites: missingRows };
-  }
-  return { valid: true, course: courseRows[0] };
 }
