@@ -1,18 +1,18 @@
 import { Router } from 'express';
 import {
-  approveCourse,
-  createStudent,
-  deleteApprovedCourse,
+  listStudents,
   getStudentCurriculum,
-  listStudents
+  enrollSemester,
+  updateGrade,
+  deleteCourse
 } from '../controllers/studentController.js';
 
 const router = Router();
 
-router.get('/', listStudents);
-router.post('/', createStudent);
-router.get('/:id/curriculum', getStudentCurriculum);
-router.post('/:id/approved-courses', approveCourse);
-router.delete('/:id/approved-courses/:courseCode', deleteApprovedCourse);
+router.get('/',                          listStudents);
+router.get('/:id/curriculum',            getStudentCurriculum);
+router.post('/:id/enroll-semester',      enrollSemester);
+router.put('/:id/courses/:code',         updateGrade);
+router.delete('/:id/courses/:code',      deleteCourse);
 
 export default router;

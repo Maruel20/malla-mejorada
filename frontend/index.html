@@ -13,7 +13,103 @@
 </head>
 <body>
 
-  <aside class="sidebar" id="sidebar">
+  <!-- ═══════════════════════════════════════════════════════
+       PANTALLA DE AUTENTICACIÓN
+  ═══════════════════════════════════════════════════════ -->
+  <div id="auth-screen" class="auth-screen">
+    <div class="auth-bg-grid"></div>
+    <div class="auth-container">
+      <div class="auth-logo">
+        <span class="logo-hex">⬡</span>
+        <div>
+          <div class="auth-title">MALLA CURRICULAR</div>
+          <div class="auth-subtitle">Ingeniería Ambiental</div>
+        </div>
+      </div>
+
+      <div class="auth-tabs">
+        <button class="auth-tab active" data-form="login">Iniciar Sesión</button>
+        <button class="auth-tab" data-form="register">Registrarse</button>
+      </div>
+
+      <!-- Login -->
+      <div id="form-login" class="auth-form">
+        <div class="field-group">
+          <label>Cédula</label>
+          <input type="text" id="login-cedula" placeholder="Ej. 1000001" autocomplete="username" />
+        </div>
+        <div class="field-group">
+          <label>Contraseña</label>
+          <input type="password" id="login-password" placeholder="••••••••" autocomplete="current-password" />
+        </div>
+        <button class="btn-primary btn-full" id="login-btn">Ingresar</button>
+        <div class="auth-hint">
+          Estudiantes de prueba: cédula <strong>1000001</strong> al <strong>1000005</strong>, contraseña <strong>Test1234!</strong>
+        </div>
+        <div id="login-error" class="auth-error" hidden></div>
+      </div>
+
+      <!-- Registro -->
+      <div id="form-register" class="auth-form" hidden>
+        <div class="auth-row">
+          <div class="field-group">
+            <label>Nombre</label>
+            <input type="text" id="reg-first-name" placeholder="Ej. María" />
+          </div>
+          <div class="field-group">
+            <label>Apellido</label>
+            <input type="text" id="reg-last-name" placeholder="Ej. Torres" />
+          </div>
+        </div>
+        <div class="field-group">
+          <label>Cédula</label>
+          <input type="text" id="reg-cedula" placeholder="Número de cédula" />
+        </div>
+        <div class="field-group">
+          <label>Contraseña</label>
+          <input type="password" id="reg-password" placeholder="Mínimo 6 caracteres" />
+        </div>
+        <div class="field-group">
+          <label>Confirmar contraseña</label>
+          <input type="password" id="reg-confirm" placeholder="Repite la contraseña" />
+        </div>
+        <button class="btn-primary btn-full" id="register-btn">Crear cuenta</button>
+        <div id="register-error" class="auth-error" hidden></div>
+        <p class="auth-hint">Al registrarte, el Semestre 1 se matricula automáticamente.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════
+       MODAL DE MATRÍCULA DE SEMESTRE
+  ═══════════════════════════════════════════════════════ -->
+  <div id="enroll-modal" class="modal" hidden>
+    <div class="modal-backdrop" id="modal-backdrop"></div>
+    <div class="modal-box">
+      <div class="modal-header">
+        <div class="modal-title" id="modal-title">Matricular Semestre</div>
+        <button class="modal-close" id="modal-close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="credits-meter">
+          <span>Créditos seleccionados:</span>
+          <span id="selected-credits-count" class="credits-num">0</span>
+          <span class="credits-range">/ mín. 12 — máx. 20</span>
+        </div>
+        <div id="enroll-course-list" class="enroll-list"></div>
+      </div>
+      <div class="modal-footer">
+        <div id="enroll-feedback" class="enroll-feedback" hidden></div>
+        <button class="btn-ghost" id="enroll-cancel">Cancelar</button>
+        <button class="btn-primary" id="enroll-confirm">Matricular</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════
+       APLICACIÓN PRINCIPAL (oculta hasta autenticar)
+  ═══════════════════════════════════════════════════════ -->
+  <aside class="sidebar" id="sidebar" hidden>
     <div class="sidebar-header">
       <div class="logo">
         <span class="logo-hex">⬡</span>
@@ -22,13 +118,11 @@
           <div class="logo-sub">CURRICULAR</div>
         </div>
       </div>
+      <button class="btn-logout" id="logout-btn" title="Cerrar sesión">⏻</button>
     </div>
 
     <nav class="sidebar-nav">
-      <button class="nav-item active" data-tab="estudiante">
-        <span class="nav-icon">◈</span><span>Estudiante</span>
-      </button>
-      <button class="nav-item" data-tab="malla">
+      <button class="nav-item active" data-tab="malla">
         <span class="nav-icon">▦</span><span>Malla Semestral</span>
       </button>
       <button class="nav-item" data-tab="grafo">
@@ -39,7 +133,7 @@
       </button>
     </nav>
 
-    <div class="sidebar-student" id="sidebar-student" hidden>
+    <div class="sidebar-student" id="sidebar-student">
       <div class="student-avatar" id="sidebar-avatar">--</div>
       <div class="student-name-wrap">
         <div class="student-name" id="sidebar-name">—</div>
@@ -58,33 +152,32 @@
           <span class="stat-lbl">Aprobadas</span>
         </div>
         <div class="stat-chip available-chip">
-          <span class="stat-num" id="sb-available">0</span>
-          <span class="stat-lbl">Disponibles</span>
+          <span class="stat-num" id="sb-enrolled">0</span>
+          <span class="stat-lbl">Matriculadas</span>
         </div>
         <div class="stat-chip blocked-chip">
           <span class="stat-num" id="sb-blocked">0</span>
           <span class="stat-lbl">Bloqueadas</span>
         </div>
-        <div class="stat-chip" style="background: rgba(59,130,246,0.15); color: #3b82f6;">
-  <span class="stat-num" id="sb-promedio">0.0</span>
-  <span class="stat-lbl">Promedio Ponderado</span>
-</div>
+        <div class="stat-chip gpa-chip">
+          <span class="stat-num" id="sb-gpa">0.0</span>
+          <span class="stat-lbl">Promedio</span>
+        </div>
       </div>
-      <button class="btn-export" id="export-pdf-btn">
-        <span>⬇</span> Exportar PDF
-      </button>
+      <button class="btn-export" id="export-pdf-btn">⬇ Exportar PDF</button>
     </div>
   </aside>
 
-  <main class="main-content">
+  <main class="main-content" id="main-content" hidden>
     <header class="topbar">
       <div class="topbar-left">
-        <h1 class="page-title" id="page-title">Gestión de Estudiante</h1>
+        <button class="menu-toggle" id="menu-toggle" aria-label="Menú">☰</button>
+        <h1 class="page-title" id="page-title">Malla Semestral</h1>
       </div>
       <div class="topbar-right">
         <div class="search-wrap">
           <span class="search-icon">⌕</span>
-          <input type="text" id="course-search" class="search-input" placeholder="Buscar materia por código o nombre..." autocomplete="off"/>
+          <input type="text" id="course-search" class="search-input" placeholder="Buscar materia…" autocomplete="off"/>
           <div class="search-dropdown" id="search-dropdown" hidden></div>
         </div>
       </div>
@@ -92,56 +185,18 @@
 
     <div class="toast-zone" id="toast-zone"></div>
 
-    <!-- TAB: ESTUDIANTE -->
-    <section class="tab-pane active" id="tab-estudiante">
-      <div class="cards-grid-2">
-        <div class="card">
-          <div class="card-title">Nuevo Estudiante</div>
-          <div class="field-group">
-            <label>Nombre completo</label>
-            <input type="text" id="full_name" placeholder="Ej. María Torres Pérez" />
-          </div>
-          <div class="field-group">
-            <label>Número de documento</label>
-            <input type="text" id="document_number" placeholder="Ej. 1234567890" />
-          </div>
-          <button class="btn-primary" id="create-student-btn">Crear estudiante</button>
-        </div>
-        <div class="card">
-          <div class="card-title">Cargar Estudiante</div>
-          <div class="field-group">
-            <label>Seleccionar estudiante</label>
-            <select id="student-select">
-              <option value="">— Selecciona un estudiante —</option>
-            </select>
-          </div>
-          <button class="btn-secondary" id="load-student-btn">Cargar malla</button>
-        </div>
-      </div>
-
-      <div class="card" id="approve-panel" hidden>
-  <div class="card-title">Registrar Calificación</div>
-  <div class="approve-row">
-    <select id="available-course-select">
-      <option value="">— Selecciona materia disponible —</option>
-    </select>
-    <input type="number" id="course-grade" step="0.1" min="1.0" max="5.0" placeholder="Nota" style="width: 80px; padding: 8px; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg2); color: var(--text1);" />
-    <button class="btn-primary" id="approve-course-btn">✓ Guardar Nota</button>
-  </div>
-  <p class="hint-text">Si la nota es menor a 3.0, la materia quedará como Perdida.</p>
-</div>
-    </section>
-
     <!-- TAB: MALLA -->
-    <section class="tab-pane" id="tab-malla">
+    <section class="tab-pane active" id="tab-malla">
       <div class="filter-bar">
         <div class="filter-pills" id="area-filters">
           <button class="pill active" data-filter="all">Todas las áreas</button>
         </div>
         <div class="legend-row">
           <span class="leg-item approved-leg">Aprobada</span>
+          <span class="leg-item enrolled-leg">Matriculada</span>
           <span class="leg-item available-leg">Disponible</span>
           <span class="leg-item blocked-leg">Bloqueada</span>
+          <span class="leg-item failed-leg">Perdida</span>
         </div>
       </div>
       <div id="curriculum-grid"></div>
@@ -152,8 +207,10 @@
       <div class="grafo-toolbar">
         <div class="grafo-legend">
           <span class="leg-item approved-leg">Aprobada</span>
+          <span class="leg-item enrolled-leg">Matriculada</span>
           <span class="leg-item available-leg">Disponible</span>
           <span class="leg-item blocked-leg">Bloqueada</span>
+          <span class="leg-item failed-leg">Perdida</span>
         </div>
         <div class="grafo-btns">
           <button class="btn-ghost" id="grafo-fit">⊡ Ajustar</button>
@@ -161,7 +218,7 @@
         </div>
       </div>
       <div id="cy-container">
-        <div class="grafo-empty" id="grafo-empty">Carga un estudiante para ver el grafo de prerrequisitos</div>
+        <div class="grafo-empty" id="grafo-empty">Carga tu malla para ver el grafo de prerrequisitos</div>
       </div>
       <div class="cy-tooltip" id="cy-tooltip" hidden></div>
     </section>
@@ -170,15 +227,10 @@
     <section class="tab-pane" id="tab-electivas">
       <div class="electivas-intro">
         <h2>Líneas de Profundización</h2>
-        <p>Selecciona tu línea de énfasis y gestiona las electivas correspondientes. Cada línea ofrece un conjunto de materias especializadas.</p>
+        <p>Materias especializadas organizadas por área de énfasis.</p>
       </div>
       <div class="lineas-grid" id="lineas-grid"></div>
-      <div class="card" id="electivas-mine" hidden>
-        <div class="card-title">Mis Electivas Registradas</div>
-        <div id="electivas-status"></div>
-      </div>
     </section>
-
   </main>
 
   <script src="app.js"></script>
