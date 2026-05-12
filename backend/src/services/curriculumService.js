@@ -234,22 +234,40 @@ export async function setGrade(studentId, courseCode, grade) {
   try {
     await conn.beginTransaction();
 
-    // Course must exist
-    const [courseRows] = await conn.query(`SELECT code, name FROM courses WHERE code = ?`, [courseCode]);
+    // Course must exist and semester must be unlocked
+    const [courseRows] = await conn.query(`SELECT code, name, semester FROM courses WHERE code = ?`, [courseCode]);
     if (!courseRows.length) {
       await conn.rollback();
       return { valid: false, status: 404, message: 'Materia no encontrada.' };
     }
 
-    // Must be enrolled
-    const [enrolled] = await conn.query(
-      `SELECT id FROM student_courses WHERE student_id = ? AND course_code = ?`,
+    const enrollments  = await getStudentEnrollments(studentId, conn);
+    const courses      = await getAllCourses(conn);
+    const unlocked     = computeUnlockedSemesters(courses, enrollments);
+    const courseSem    = courseRows[0].semester;
+
+    if (!unlocked.has(courseSem)) {
+      await conn.rollback();
+      return { valid: false, status: 403, message: `El semestre ${courseSem} aún no está desbloqueado.` };
+    }
+
+    // Verify prerequisites are met before grading
+    const prereqMap = await getPrerequisitesMap(conn);
+    const prereqs   = prereqMap.get(courseCode) || [];
+    const missing   = prereqs.filter(code => {
+      const e = enrollments.get(code);
+      return !e || e.grade === null || e.grade < 3.0;
+    });
+    if (missing.length > 0) {
+      await conn.rollback();
+      return { valid: false, status: 400, message: `Faltan prerrequisitos: ${missing.join(', ')}` };
+    }
+
+    // Auto-enroll if not yet enrolled (professor entering grade directly)
+    await conn.query(
+      `INSERT IGNORE INTO student_courses (student_id, course_code) VALUES (?, ?)`,
       [studentId, courseCode]
     );
-    if (!enrolled.length) {
-      await conn.rollback();
-      return { valid: false, status: 404, message: 'El estudiante no está matriculado en esta materia.' };
-    }
 
     await conn.query(
       `UPDATE student_courses SET grade = ?, updated_at = CURRENT_TIMESTAMP

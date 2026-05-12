@@ -122,7 +122,10 @@ document.getElementById('login-btn').addEventListener('click', async () => {
     showMainApp();
     await loadCurriculum();
   } catch (err) {
-    showAuthError(errEl, err.message || 'Error al iniciar sesión.');
+    const msg = err instanceof TypeError
+      ? 'No se pudo conectar al servidor. ¿Está el backend activo en el puerto 3000?'
+      : (err.message || 'Cédula o contraseña incorrectos.');
+    showAuthError(errEl, msg);
   } finally {
     document.getElementById('login-btn').disabled = false;
   }
@@ -165,7 +168,10 @@ document.getElementById('register-btn').addEventListener('click', async () => {
     await loadCurriculum();
     toast('Registro exitoso. Semestre 1 matriculado automáticamente.', 'success');
   } catch (err) {
-    showAuthError(errEl, err.message || 'Error al registrarse.');
+    const msg = err instanceof TypeError
+      ? 'No se pudo conectar al servidor. ¿Está el backend activo en el puerto 3000?'
+      : (err.message || 'Error al registrarse.');
+    showAuthError(errEl, msg);
   } finally {
     document.getElementById('register-btn').disabled = false;
   }
@@ -476,7 +482,7 @@ function wireCardEvents(div, course) {
       if (isNaN(grade) || grade < 1.0 || grade > 5.0) {
         toast('Nota inválida. Ingresa un valor entre 1.0 y 5.0', 'error'); return;
       }
-      await submitGrade(course.code, grade, course.semester);
+      await submitGrade(course.code, grade);
     });
   }
 
@@ -487,7 +493,7 @@ function wireCardEvents(div, course) {
       if (e.key === 'Enter') {
         const grade = parseFloat(gradeInput.value);
         if (!isNaN(grade) && grade >= 1.0 && grade <= 5.0) {
-          await submitGrade(course.code, grade, course.semester);
+          await submitGrade(course.code, grade);
         }
       }
     });
@@ -503,25 +509,9 @@ function wireCardEvents(div, course) {
   }
 }
 
-async function submitGrade(courseCode, grade, semester) {
+async function submitGrade(courseCode, grade) {
   try {
-    // If course is 'available' (not enrolled), first enroll it for this semester
-    const courseData = currentCurriculum?.courses.find(c => c.code === courseCode);
-    if (courseData?.status === 'available') {
-      // Enroll single course implicitly - check credits
-      const semCourses = currentCurriculum.courses.filter(c => c.semester === semester && ['enrolled','approved','failed'].includes(c.status));
-      const enrolledCredits = semCourses.reduce((s, c) => s + c.credits, 0) + (courseData?.credits || 0);
-      if (enrolledCredits > MAX_CREDITS) {
-        toast(`Superarías el máximo de ${MAX_CREDITS} créditos en el semestre.`, 'error'); return;
-      }
-      // Enroll the course
-      const codes = [...semCourses.map(c => c.code), courseCode];
-      await apiFetch(`/students/${currentStudent.id}/enroll-semester`, {
-        method: 'POST',
-        body: JSON.stringify({ semester, course_codes: codes })
-      });
-    }
-
+    // El backend auto-matricula si la materia no está inscrita aún
     const data = await apiFetch(`/students/${currentStudent.id}/courses/${courseCode}`, {
       method: 'PUT',
       body: JSON.stringify({ grade })

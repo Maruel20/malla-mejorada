@@ -49,6 +49,8 @@
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+/* El atributo hidden debe ganar sobre cualquier display de clase */
+[hidden] { display: none !important; }
 html { scroll-behavior: smooth; }
 body { font-family: var(--font-sans); background: var(--bg); color: var(--text); display: flex; min-height: 100vh; overflow-x: hidden; }
 
