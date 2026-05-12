@@ -2,12 +2,13 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { pool } from './config/db.js';
-import courseRoutes from './routes/courseRoutes.js';
-import studentRoutes from './routes/studentRoutes.js';
+import courseRoutes   from './routes/courseRoutes.js';
+import studentRoutes  from './routes/studentRoutes.js';
+import authRoutes     from './routes/authRoutes.js';
 
 dotenv.config();
 
-const app = express();
+const app  = express();
 const PORT = Number(process.env.PORT || 3000);
 
 app.use(cors());
@@ -22,7 +23,8 @@ app.get('/api/health', async (_req, res) => {
   }
 });
 
-app.use('/api/courses', courseRoutes);
+app.use('/api/auth',     authRoutes);
+app.use('/api/courses',  courseRoutes);
 app.use('/api/students', studentRoutes);
 
 app.use((_req, res) => {
