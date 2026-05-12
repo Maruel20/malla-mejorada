@@ -1,18 +1,9 @@
 import { Router } from 'express';
-import {
-  listStudents,
-  getStudentCurriculum,
-  enrollSemester,
-  updateGrade,
-  deleteCourse
-} from '../controllers/studentController.js';
+import { malla, matricular, putNota, deleteMateria } from '../controllers/studentController.js';
 
-const router = Router();
-
-router.get('/',                          listStudents);
-router.get('/:id/curriculum',            getStudentCurriculum);
-router.post('/:id/enroll-semester',      enrollSemester);
-router.put('/:id/courses/:code',         updateGrade);
-router.delete('/:id/courses/:code',      deleteCourse);
-
-export default router;
+const r = Router();
+r.get('/:id/malla',              malla);
+r.post('/:id/matricular',        matricular);
+r.put('/:id/nota/:codigo',       putNota);
+r.delete('/:id/materia/:codigo', deleteMateria);
+export default r;

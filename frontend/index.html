@@ -1,238 +1,235 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Malla Curricular — Ingeniería Ambiental</title>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Malla Curricular — Ing. Ambiental</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css"/>
 </head>
 <body>
 
-  <!-- ═══════════════════════════════════════════════════════
-       PANTALLA DE AUTENTICACIÓN
-  ═══════════════════════════════════════════════════════ -->
-  <div id="auth-screen" class="auth-screen">
-    <div class="auth-bg-grid"></div>
-    <div class="auth-container">
-      <div class="auth-logo">
-        <span class="logo-hex">⬡</span>
-        <div>
-          <div class="auth-title">MALLA CURRICULAR</div>
-          <div class="auth-subtitle">Ingeniería Ambiental</div>
-        </div>
-      </div>
+<!-- ╔══════════════════════════════════════════════════════════╗
+     ║  PANTALLA DE AUTENTICACIÓN                              ║
+     ╚══════════════════════════════════════════════════════════╝ -->
+<div id="pantalla-auth">
+  <div class="auth-card">
 
-      <div class="auth-tabs">
-        <button class="auth-tab active" data-form="login">Iniciar Sesión</button>
-        <button class="auth-tab" data-form="register">Registrarse</button>
-      </div>
-
-      <!-- Login -->
-      <div id="form-login" class="auth-form">
-        <div class="field-group">
-          <label>Cédula</label>
-          <input type="text" id="login-cedula" placeholder="Ej. 1000001" autocomplete="username" />
-        </div>
-        <div class="field-group">
-          <label>Contraseña</label>
-          <input type="password" id="login-password" placeholder="••••••••" autocomplete="current-password" />
-        </div>
-        <button class="btn-primary btn-full" id="login-btn">Ingresar</button>
-        <div class="auth-hint">
-          Estudiantes de prueba: cédula <strong>1000001</strong> al <strong>1000005</strong>, contraseña <strong>Test1234!</strong>
-        </div>
-        <div id="login-error" class="auth-error" hidden></div>
-      </div>
-
-      <!-- Registro -->
-      <div id="form-register" class="auth-form" hidden>
-        <div class="auth-row">
-          <div class="field-group">
-            <label>Nombre</label>
-            <input type="text" id="reg-first-name" placeholder="Ej. María" />
-          </div>
-          <div class="field-group">
-            <label>Apellido</label>
-            <input type="text" id="reg-last-name" placeholder="Ej. Torres" />
-          </div>
-        </div>
-        <div class="field-group">
-          <label>Cédula</label>
-          <input type="text" id="reg-cedula" placeholder="Número de cédula" />
-        </div>
-        <div class="field-group">
-          <label>Contraseña</label>
-          <input type="password" id="reg-password" placeholder="Mínimo 6 caracteres" />
-        </div>
-        <div class="field-group">
-          <label>Confirmar contraseña</label>
-          <input type="password" id="reg-confirm" placeholder="Repite la contraseña" />
-        </div>
-        <button class="btn-primary btn-full" id="register-btn">Crear cuenta</button>
-        <div id="register-error" class="auth-error" hidden></div>
-        <p class="auth-hint">Al registrarte, el Semestre 1 se matricula automáticamente.</p>
+    <div class="auth-logo">
+      <span class="logo-hex">⬡</span>
+      <div>
+        <div class="auth-titulo">MALLA CURRICULAR</div>
+        <div class="auth-sub">Ingeniería Ambiental</div>
       </div>
     </div>
-  </div>
 
-  <!-- ═══════════════════════════════════════════════════════
-       MODAL DE MATRÍCULA DE SEMESTRE
-  ═══════════════════════════════════════════════════════ -->
-  <div id="enroll-modal" class="modal" hidden>
-    <div class="modal-backdrop" id="modal-backdrop"></div>
-    <div class="modal-box">
-      <div class="modal-header">
-        <div class="modal-title" id="modal-title">Matricular Semestre</div>
-        <button class="modal-close" id="modal-close">✕</button>
+    <!-- Pestañas -->
+    <div class="auth-tabs">
+      <button class="auth-tab activo" id="tab-login"     onclick="mostrarLogin()">Iniciar Sesión</button>
+      <button class="auth-tab"         id="tab-registro" onclick="mostrarRegistro()">Registrarse</button>
+    </div>
+
+    <!-- ─── Formulario LOGIN ─── -->
+    <div id="form-login">
+      <div class="campo">
+        <label>Cédula</label>
+        <input type="text" id="login-cedula" placeholder="Ej. 1000001" autocomplete="username"/>
       </div>
-      <div class="modal-body">
-        <div class="credits-meter">
-          <span>Créditos seleccionados:</span>
-          <span id="selected-credits-count" class="credits-num">0</span>
-          <span class="credits-range">/ mín. 12 — máx. 20</span>
+      <div class="campo">
+        <label>Contraseña</label>
+        <input type="password" id="login-pass" placeholder="••••••••" autocomplete="current-password"/>
+      </div>
+      <button class="btn-primary btn-full" id="btn-login">Ingresar</button>
+      <div id="error-login" class="auth-error oculto"></div>
+      <p class="auth-hint">
+        Prueba: cédula <b>1000001</b> al <b>1000005</b> · contraseña <b>Test1234!</b>
+      </p>
+    </div>
+
+    <!-- ─── Formulario REGISTRO ─── -->
+    <div id="form-registro" class="oculto">
+      <div class="campo-fila">
+        <div class="campo">
+          <label>Nombre</label>
+          <input type="text" id="reg-nombre"   placeholder="Ej. María"/>
         </div>
-        <div id="enroll-course-list" class="enroll-list"></div>
+        <div class="campo">
+          <label>Apellido</label>
+          <input type="text" id="reg-apellido" placeholder="Ej. Torres"/>
+        </div>
       </div>
-      <div class="modal-footer">
-        <div id="enroll-feedback" class="enroll-feedback" hidden></div>
-        <button class="btn-ghost" id="enroll-cancel">Cancelar</button>
-        <button class="btn-primary" id="enroll-confirm">Matricular</button>
+      <div class="campo">
+        <label>Cédula</label>
+        <input type="text" id="reg-cedula" placeholder="Número de documento"/>
       </div>
+      <div class="campo">
+        <label>Contraseña <span class="hint-inline">(mínimo 6 caracteres)</span></label>
+        <input type="password" id="reg-pass"    placeholder="••••••••"/>
+      </div>
+      <div class="campo">
+        <label>Confirmar contraseña</label>
+        <input type="password" id="reg-confirm" placeholder="••••••••"/>
+      </div>
+      <button class="btn-primary btn-full" id="btn-registro">Crear cuenta</button>
+      <div id="error-registro" class="auth-error oculto"></div>
+      <p class="auth-hint">Al registrarte, el Semestre 1 se matricula automáticamente.</p>
+    </div>
+
+  </div>
+</div><!-- /pantalla-auth -->
+
+
+<!-- ╔══════════════════════════════════════════════════════════╗
+     ║  MODAL DE MATRÍCULA                                     ║
+     ╚══════════════════════════════════════════════════════════╝ -->
+<div id="modal-matricula" class="oculto">
+  <div class="modal-fondo" onclick="cerrarModal()"></div>
+  <div class="modal-caja">
+    <div class="modal-cabecera">
+      <span class="modal-titulo" id="modal-titulo">Matricular Semestre</span>
+      <button class="modal-cerrar" onclick="cerrarModal()">✕</button>
+    </div>
+    <div class="modal-cuerpo">
+      <div class="creditos-resumen">
+        <span>Créditos seleccionados:</span>
+        <span id="cr-seleccionados" class="cr-num">0</span>
+        <span class="cr-rango">mín. 12 — máx. 20</span>
+      </div>
+      <div id="lista-matricula"></div>
+    </div>
+    <div class="modal-pie">
+      <div id="modal-error" class="auth-error oculto"></div>
+      <button class="btn-ghost" onclick="cerrarModal()">Cancelar</button>
+      <button class="btn-primary" id="btn-confirmar-matricula">Matricular</button>
     </div>
   </div>
+</div>
 
-  <!-- ═══════════════════════════════════════════════════════
-       APLICACIÓN PRINCIPAL (oculta hasta autenticar)
-  ═══════════════════════════════════════════════════════ -->
-  <aside class="sidebar" id="sidebar" hidden>
-    <div class="sidebar-header">
+
+<!-- ╔══════════════════════════════════════════════════════════╗
+     ║  APLICACIÓN PRINCIPAL                                   ║
+     ╚══════════════════════════════════════════════════════════╝ -->
+<div id="app" class="oculto">
+
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-top">
       <div class="logo">
         <span class="logo-hex">⬡</span>
-        <div class="logo-text">
-          <div class="logo-title">MALLA</div>
+        <div class="logo-texto">
+          <div class="logo-titulo">MALLA</div>
           <div class="logo-sub">CURRICULAR</div>
         </div>
       </div>
-      <button class="btn-logout" id="logout-btn" title="Cerrar sesión">⏻</button>
+      <button class="btn-cerrar-sesion" id="btn-logout" title="Cerrar sesión">⏻</button>
     </div>
 
-    <nav class="sidebar-nav">
-      <button class="nav-item active" data-tab="malla">
-        <span class="nav-icon">▦</span><span>Malla Semestral</span>
-      </button>
-      <button class="nav-item" data-tab="grafo">
-        <span class="nav-icon">◉</span><span>Grafo</span>
-      </button>
-      <button class="nav-item" data-tab="electivas">
-        <span class="nav-icon">◇</span><span>Electivas</span>
-      </button>
+    <nav class="nav-lateral">
+      <button class="nav-btn activo" data-tab="malla">▦ Malla Semestral</button>
+      <button class="nav-btn"        data-tab="grafo">◉ Grafo</button>
+      <button class="nav-btn"        data-tab="electivas">◇ Electivas</button>
     </nav>
 
-    <div class="sidebar-student" id="sidebar-student">
-      <div class="student-avatar" id="sidebar-avatar">--</div>
-      <div class="student-name-wrap">
-        <div class="student-name" id="sidebar-name">—</div>
-        <div class="student-doc" id="sidebar-doc">—</div>
-      </div>
-      <div class="progress-wrap">
-        <svg class="progress-ring" viewBox="0 0 80 80">
-          <circle cx="40" cy="40" r="32" class="ring-bg"/>
-          <circle cx="40" cy="40" r="32" class="ring-fill" id="progress-ring-fill"/>
+    <div class="sidebar-perfil">
+      <div class="avatar" id="avatar">--</div>
+      <div class="perfil-nombre" id="perfil-nombre">—</div>
+      <div class="perfil-cedula" id="perfil-cedula">—</div>
+
+      <div class="anillo-wrap">
+        <svg viewBox="0 0 80 80" class="anillo-svg">
+          <circle cx="40" cy="40" r="32" class="anillo-fondo"/>
+          <circle cx="40" cy="40" r="32" class="anillo-fill" id="anillo-fill"/>
         </svg>
-        <div class="progress-pct" id="progress-pct">0%</div>
+        <div class="anillo-pct" id="anillo-pct">0%</div>
       </div>
-      <div class="sidebar-stats">
-        <div class="stat-chip approved-chip">
-          <span class="stat-num" id="sb-approved">0</span>
+
+      <div class="stat-grid">
+        <div class="stat aprobada">
+          <span class="stat-num" id="st-aprobadas">0</span>
           <span class="stat-lbl">Aprobadas</span>
         </div>
-        <div class="stat-chip available-chip">
-          <span class="stat-num" id="sb-enrolled">0</span>
+        <div class="stat matriculada">
+          <span class="stat-num" id="st-matriculadas">0</span>
           <span class="stat-lbl">Matriculadas</span>
         </div>
-        <div class="stat-chip blocked-chip">
-          <span class="stat-num" id="sb-blocked">0</span>
+        <div class="stat bloqueada">
+          <span class="stat-num" id="st-bloqueadas">0</span>
           <span class="stat-lbl">Bloqueadas</span>
         </div>
-        <div class="stat-chip gpa-chip">
-          <span class="stat-num" id="sb-gpa">0.0</span>
+        <div class="stat promedio">
+          <span class="stat-num" id="st-promedio">0.0</span>
           <span class="stat-lbl">Promedio</span>
         </div>
       </div>
-      <button class="btn-export" id="export-pdf-btn">⬇ Exportar PDF</button>
+
+      <button class="btn-pdf" onclick="exportarPDF()">⬇ Exportar PDF</button>
     </div>
   </aside>
 
-  <main class="main-content" id="main-content" hidden>
+  <!-- Contenido principal -->
+  <main class="main">
     <header class="topbar">
-      <div class="topbar-left">
-        <button class="menu-toggle" id="menu-toggle" aria-label="Menú">☰</button>
-        <h1 class="page-title" id="page-title">Malla Semestral</h1>
-      </div>
-      <div class="topbar-right">
-        <div class="search-wrap">
-          <span class="search-icon">⌕</span>
-          <input type="text" id="course-search" class="search-input" placeholder="Buscar materia…" autocomplete="off"/>
-          <div class="search-dropdown" id="search-dropdown" hidden></div>
-        </div>
+      <button class="menu-toggle" id="menu-toggle" onclick="toggleSidebar()">☰</button>
+      <h1 class="page-titulo" id="page-titulo">Malla Semestral</h1>
+      <div class="busqueda-wrap">
+        <input type="text" id="buscador" class="buscador" placeholder="Buscar materia…" autocomplete="off"/>
+        <div id="buscador-dropdown" class="buscador-dropdown oculto"></div>
       </div>
     </header>
 
-    <div class="toast-zone" id="toast-zone"></div>
+    <div id="toasts"></div>
 
-    <!-- TAB: MALLA -->
-    <section class="tab-pane active" id="tab-malla">
-      <div class="filter-bar">
-        <div class="filter-pills" id="area-filters">
-          <button class="pill active" data-filter="all">Todas las áreas</button>
+    <!-- TAB MALLA -->
+    <section class="tab-panel activo" id="tab-malla">
+      <div class="filtros-bar">
+        <div class="filtros-pills" id="filtros-area">
+          <button class="pill activo" data-area="todas">Todas las áreas</button>
         </div>
-        <div class="legend-row">
-          <span class="leg-item approved-leg">Aprobada</span>
-          <span class="leg-item enrolled-leg">Matriculada</span>
-          <span class="leg-item available-leg">Disponible</span>
-          <span class="leg-item blocked-leg">Bloqueada</span>
-          <span class="leg-item failed-leg">Perdida</span>
+        <div class="leyenda">
+          <span class="leg aprobada">Aprobada</span>
+          <span class="leg matriculada">Matriculada</span>
+          <span class="leg disponible">Disponible</span>
+          <span class="leg bloqueada">Bloqueada</span>
+          <span class="leg reprobada">Reprobada</span>
         </div>
       </div>
-      <div id="curriculum-grid"></div>
+      <div id="grid-malla" class="grid-malla"></div>
     </section>
 
-    <!-- TAB: GRAFO -->
-    <section class="tab-pane" id="tab-grafo">
-      <div class="grafo-toolbar">
-        <div class="grafo-legend">
-          <span class="leg-item approved-leg">Aprobada</span>
-          <span class="leg-item enrolled-leg">Matriculada</span>
-          <span class="leg-item available-leg">Disponible</span>
-          <span class="leg-item blocked-leg">Bloqueada</span>
-          <span class="leg-item failed-leg">Perdida</span>
+    <!-- TAB GRAFO -->
+    <section class="tab-panel oculto" id="tab-grafo">
+      <div class="grafo-barra">
+        <div class="leyenda">
+          <span class="leg aprobada">Aprobada</span>
+          <span class="leg matriculada">Matriculada</span>
+          <span class="leg disponible">Disponible</span>
+          <span class="leg bloqueada">Bloqueada</span>
+          <span class="leg reprobada">Reprobada</span>
         </div>
         <div class="grafo-btns">
-          <button class="btn-ghost" id="grafo-fit">⊡ Ajustar</button>
-          <button class="btn-ghost" id="grafo-layout">↻ Reorganizar</button>
+          <button class="btn-ghost" onclick="cyAjustar()">⊡ Ajustar</button>
+          <button class="btn-ghost" onclick="cyReorganizar()">↻ Reorganizar</button>
         </div>
       </div>
       <div id="cy-container">
-        <div class="grafo-empty" id="grafo-empty">Carga tu malla para ver el grafo de prerrequisitos</div>
+        <div id="cy-empty" class="cy-empty">Carga la malla para ver el grafo</div>
       </div>
-      <div class="cy-tooltip" id="cy-tooltip" hidden></div>
+      <div id="cy-tooltip" class="cy-tooltip oculto"></div>
     </section>
 
-    <!-- TAB: ELECTIVAS -->
-    <section class="tab-pane" id="tab-electivas">
-      <div class="electivas-intro">
-        <h2>Líneas de Profundización</h2>
-        <p>Materias especializadas organizadas por área de énfasis.</p>
-      </div>
-      <div class="lineas-grid" id="lineas-grid"></div>
+    <!-- TAB ELECTIVAS -->
+    <section class="tab-panel oculto" id="tab-electivas">
+      <h2 class="electivas-titulo">Líneas de Profundización</h2>
+      <div id="lineas-grid" class="lineas-grid"></div>
     </section>
   </main>
 
-  <script src="app.js"></script>
+</div><!-- /app -->
+
+<script src="app.js"></script>
 </body>
 </html>
